@@ -1,0 +1,2 @@
+-r requirements-inference.txt
+matplotlib==3.9.4

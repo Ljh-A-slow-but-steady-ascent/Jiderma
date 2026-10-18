@@ -1,0 +1,33 @@
+.cache/
+.local/
+.run/
+logs/
+.conda/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+*.db
+*.sqlite
+*.sqlite3
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+.aws/
+.codex/
+.agents/
+.vscode/
+data/uploads/
+data/cases/
+
+# Gated model artifacts must remain local and must not be redistributed.
+checkpoints/
+weights/
+
+# Local datasets, upstream archives, and generated feature caches.
+third_party/DermFM-Zero/data/
+third_party/DermFM-Zero/linear_probe.zip
+third_party/_archives/
+artifacts/case_study/
+artifacts/*.log
+artifacts/training/**/*_features.pt

@@ -1,0 +1,26 @@
+2026-10-11 13:57:00,099 | INFO | run started at 2026-10-11T13:57:00.084094+08:00
+2026-10-11 13:57:00,099 | INFO | official split counts={'val': 500, 'train': 8012, 'test': 1503}
+2026-10-11 13:57:00,099 | INFO | labels={2: 'benign keratosis', 5: 'nevus', 3: 'dermatofibroma', 4: 'melanoma', 6: 'vascular', 1: 'basal cell carcinoma', 0: 'actinic keratosis'}
+2026-10-11 13:57:00,149 | INFO | candidate started seed=42 weight_mode=none
+2026-10-11 13:57:06,452 | INFO | candidate completed seed=42 weight_mode=none best_epoch=112 val_macro_f1=0.8130 val_accuracy=0.8760
+2026-10-11 13:57:06,452 | INFO | candidate started seed=123 weight_mode=none
+2026-10-11 13:57:12,245 | INFO | candidate completed seed=123 weight_mode=none best_epoch=107 val_macro_f1=0.8102 val_accuracy=0.8740
+2026-10-11 13:57:12,245 | INFO | candidate started seed=1000 weight_mode=none
+2026-10-11 13:57:18,714 | INFO | candidate completed seed=1000 weight_mode=none best_epoch=124 val_macro_f1=0.8157 val_accuracy=0.8780
+2026-10-11 13:57:18,714 | INFO | candidate started seed=42 weight_mode=sqrt
+2026-10-11 13:57:27,033 | INFO | candidate completed seed=42 weight_mode=sqrt best_epoch=172 val_macro_f1=0.8075 val_accuracy=0.8700
+2026-10-11 13:57:27,033 | INFO | candidate started seed=123 weight_mode=sqrt
+2026-10-11 13:57:35,301 | INFO | candidate completed seed=123 weight_mode=sqrt best_epoch=171 val_macro_f1=0.8064 val_accuracy=0.8680
+2026-10-11 13:57:35,301 | INFO | candidate started seed=1000 weight_mode=sqrt
+2026-10-11 13:57:46,783 | INFO | candidate completed seed=1000 weight_mode=sqrt best_epoch=255 val_macro_f1=0.8149 val_accuracy=0.8720
+2026-10-11 13:57:46,783 | INFO | candidate started seed=42 weight_mode=balanced
+2026-10-11 13:57:58,582 | INFO | candidate completed seed=42 weight_mode=balanced best_epoch=254 val_macro_f1=0.7683 val_accuracy=0.8300
+2026-10-11 13:57:58,582 | INFO | candidate started seed=123 weight_mode=balanced
+2026-10-11 13:58:10,597 | INFO | candidate completed seed=123 weight_mode=balanced best_epoch=259 val_macro_f1=0.7674 val_accuracy=0.8280
+2026-10-11 13:58:10,597 | INFO | candidate started seed=1000 weight_mode=balanced
+2026-10-11 13:58:16,178 | INFO | candidate completed seed=1000 weight_mode=balanced best_epoch=95 val_macro_f1=0.7435 val_accuracy=0.8100
+2026-10-11 13:58:16,238 | INFO | selected seed=1000 weight_mode=none epoch=124
+2026-10-11 13:58:16,238 | INFO | test accuracy=0.8929 balanced_accuracy=0.7934 macro_f1=0.8098
+2026-10-11 13:58:16,238 | INFO | checkpoint=/media/lu/CE387FD6387FBC51/科研项目/医疗agent/artifacts/training/ham7_linear_head/ham7_linear_head.pt
+2026-10-11 13:58:16,238 | INFO | metrics=/media/lu/CE387FD6387FBC51/科研项目/医疗agent/artifacts/training/ham7_linear_head/metrics.json
+2026-10-11 13:58:16,238 | INFO | training log=/media/lu/CE387FD6387FBC51/科研项目/医疗agent/artifacts/training/ham7_linear_head/training.log

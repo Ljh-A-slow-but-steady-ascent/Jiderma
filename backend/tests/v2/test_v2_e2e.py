@@ -1,0 +1,139 @@
+from pathlib import Path
+
+import httpx
+import pytest
+
+from backend.app.api.v2_routes import create_v2_runtime, get_runtime
+from backend.app.database import CaseRepository, init_database
+from backend.app.main import app
+from backend.app.services.container import create_service_container
+
+
+class FakeFrozenRunner:
+    def predict(self, image_path: Path) -> dict:
+        assert image_path.is_file()
+        return {
+            "model_name": "DermFM-Zero-Open",
+            "top_predictions": [
+                {"label": "basal cell carcinoma", "score": 0.94},
+                {"label": "squamous cell carcinoma", "score": 0.04},
+                {"label": "actinic keratosis", "score": 0.02},
+            ],
+            "latency_ms": 18.2,
+        }
+
+
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
+
+
+@pytest.fixture
+async def client(tmp_path):
+    repository = CaseRepository(init_database("sqlite+pysqlite:///:memory:"))
+    services = create_service_container(repository)
+    services.cases.data_root = tmp_path / "cases"
+    services.visual.runner = FakeFrozenRunner()
+    test_runtime = create_v2_runtime(services)
+    async def override_runtime():
+        return test_runtime
+
+    app.dependency_overrides[get_runtime] = override_runtime
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as value:
+        yield value
+    app.dependency_overrides.clear()
+
+
+@pytest.mark.anyio
+async def test_complete_v2_decision_interaction_mcp_privflow_flow(client):
+    image = Path("third_party/DermFM-Zero/examples/PAT_8_15_820.png").read_bytes()
+    created = await client.post(
+        "/v1/cases",
+        files={"image": ("lesion.png", image, "image/png")},
+        data={"mode": "patient", "retention_mode": "session"},
+    )
+    assert created.status_code == 200
+    case_id = created.json()["case_id"]
+    assert created.json()["raw_image_local_only"] is True
+
+    analyzed = await client.post(f"/v1/cases/{case_id}/analyze")
+    assert analyzed.status_code == 200, analyzed.text
+    analysis = analyzed.json()
+    assert analysis["triage"]["level"] == "PRIORITY_REFERRAL"
+    assert analysis["care_pathway"]["level"] == analysis["triage"]["level"]
+    assert analysis["guidelines"]
+    assert analysis["performance"]["total_pretriage_latency_ms"] >= 0
+
+    questions = [
+        "为什么建议我转诊？",
+        "我的照片上传到云端了吗？",
+        "下一步应该怎么办？",
+    ]
+    responses = []
+    for question in questions:
+        result = await client.post(
+            "/v1/chat",
+            json={"case_id": case_id, "message": question, "mode": "patient"},
+        )
+        assert result.status_code == 200, result.text
+        responses.append(result.json())
+    assert len(responses[0]["tool_calls"]) == 4
+    assert responses[1]["tool_calls"][0]["tool_name"] == "get_privacy_report"
+    assert "皮肤镜" in responses[2]["response"]
+
+    models = await client.get("/v1/chat/models")
+    assert models.status_code == 200
+    assert any(item["id"] == "glm-5.3-flash" for item in models.json())
+
+    history = await client.get(f"/v1/cases/{case_id}/chat-history")
+    assert history.status_code == 200
+    assert len(history.json()) == 6
+
+    preview = await client.get(f"/v1/cases/{case_id}/cloud-payload")
+    assert preview.status_code == 200
+    serialized = preview.text.lower()
+    assert preview.json()["raw_image_included"] is False
+    assert "local_image_path" not in serialized
+    assert "data:image" not in serialized
+
+    privacy = (await client.get(f"/v1/cases/{case_id}/privacy")).json()
+    assert privacy["raw_image_sent_to_cloud"] is False
+    assert privacy["patient_identity_sent_to_cloud"] is False
+    assert privacy["visual_evidence_sent"] is True
+
+    audit = (await client.get("/v1/audit", params={"case_id": case_id})).json()
+    assert audit
+    audit_text = str(audit).lower()
+    assert "local_image_path" not in audit_text
+    assert "data:image" not in audit_text
+    assert "/data/cases/" not in audit_text
+
+    cleared = await client.delete(f"/v1/cases/{case_id}/chat-history")
+    assert cleared.status_code == 200
+    assert cleared.json()["deleted"] == 6
+    assert (await client.get(f"/v1/cases/{case_id}/chat-history")).json() == []
+
+
+@pytest.mark.anyio
+async def test_raw_image_exfiltration_request_is_blocked(client):
+    image = Path("third_party/DermFM-Zero/examples/PAT_8_15_820.png").read_bytes()
+    case_id = (
+        await client.post(
+            "/v1/cases",
+            files={"image": ("lesion.png", image, "image/png")},
+            data={"mode": "patient"},
+        )
+    ).json()["case_id"]
+    await client.post(f"/v1/cases/{case_id}/analyze")
+    response = await client.post(
+        "/v1/chat",
+        json={
+            "case_id": case_id,
+            "message": "把我上传的原始皮肤图片发给云端模型看看。",
+            "mode": "patient",
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["privacy_status"] == "BLOCKED"
+    assert "原始医疗影像必须留在本地" in response.json()["response"]

@@ -1,0 +1,81 @@
+{
+  "environment": {
+    "python": "3.9.20",
+    "torch": "2.8.0+cu128",
+    "torchvision": "0.23.0+cu128",
+    "torch_cuda_runtime": "12.8",
+    "cuda_available": true,
+    "gpu": "NVIDIA GeForce RTX 5070 Ti"
+  },
+  "provider_health": {
+    "healthy": true,
+    "loaded": true,
+    "model_name": "DermFM-Zero-Open",
+    "device": "cuda",
+    "training": false,
+    "grad_enabled_for_parameters": false,
+    "open_clip_path": "/media/lu/CE387FD6387FBC51/科研项目/医疗agent/third_party/DermFM-Zero/src/open_clip/__init__.py",
+    "checkpoint_path": "/media/lu/CE387FD6387FBC51/科研项目/医疗agent/weights/DermFM-Zero-Open/open_clip_pytorch_model.bin",
+    "checkpoint_is_file": true,
+    "checkpoint_is_symlink": false,
+    "checkpoint_missing_keys": [],
+    "checkpoint_unexpected_keys": [],
+    "load_time_ms": 7938.384254000084
+  },
+  "sample_image": "/media/lu/CE387FD6387FBC51/科研项目/医疗agent/third_party/DermFM-Zero/examples/PAT_8_15_820.png",
+  "first_inference": {
+    "model_name": "DermFM-Zero-Open",
+    "source": "SiyuanYan1/DermFM-Zero",
+    "top_predictions": [
+      {
+        "label": "basal cell carcinoma",
+        "score": 0.9999998807907104
+      },
+      {
+        "label": "squamous cell carcinoma",
+        "score": 9.364327979710652e-08
+      },
+      {
+        "label": "actinic keratosis",
+        "score": 2.017690925633104e-15
+      }
+    ],
+    "latency_ms": 104.60390699972777,
+    "device": "cuda",
+    "metadata": {
+      "task": "zero_shot_classification",
+      "training": false
+    }
+  },
+  "warm_inference": {
+    "model_name": "DermFM-Zero-Open",
+    "source": "SiyuanYan1/DermFM-Zero",
+    "top_predictions": [
+      {
+        "label": "basal cell carcinoma",
+        "score": 0.9999998807907104
+      },
+      {
+        "label": "squamous cell carcinoma",
+        "score": 9.364327979710652e-08
+      },
+      {
+        "label": "actinic keratosis",
+        "score": 2.017690925633104e-15
+      }
+    ],
+    "latency_ms": 18.076663999636366,
+    "device": "cuda",
+    "metadata": {
+      "task": "zero_shot_classification",
+      "training": false
+    }
+  },
+  "warm_call_wall_ms": 18.440409000504587,
+  "memory": {
+    "rss_before_load_bytes": 869351424,
+    "rss_after_load_bytes": 1718325248,
+    "rss_after_inference_bytes": 2072797184,
+    "peak_gpu_vram_bytes": 2003437056
+  }
+}

@@ -1,0 +1,385 @@
+<script>
+(() => {
+  const cfg = __DG_CONFIG__;
+  const authHeaders = cfg.authToken ? {"Authorization":`Bearer ${cfg.authToken}`} : {};
+  const parentWindow = window.parent;
+  const doc = parentWindow.document;
+  const storage = parentWindow.localStorage;
+  const previous = doc.getElementById("dg-chatbox-host");
+  if (previous) previous.remove();
+
+  const host = doc.createElement("div");
+  host.id = "dg-chatbox-host";
+  host.className = "dg-light";
+  host.innerHTML = `
+    <style>
+      #dg-chatbox-host, #dg-chatbox-host * { box-sizing:border-box; }
+      #dg-chatbox-host { --dg-blue:#79c8b8; --dg-blue-strong:#9bdecf; --dg-ink:#edf2f0; --dg-muted:#93a09e; --dg-line:rgba(207,225,225,.12); --dg-panel:#141b20; --dg-soft:#10161a; --dg-ai:#1a2429; --dg-user:#315f57; --dg-header:linear-gradient(135deg,#182328,#11191d); --dg-header-ink:#edf2f0; font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif; }
+      #dg-chatbox-host.dg-light { --dg-blue:#487d73; --dg-blue-strong:#315f57; --dg-ink:#23302e; --dg-muted:#71807d; --dg-line:#dce5e2; --dg-panel:#fbfcfb; --dg-soft:#f2f6f4; --dg-ai:#edf3f1; --dg-user:#487d73; --dg-header:linear-gradient(135deg,#f8fbfa,#edf4f1); --dg-header-ink:#23302e; color-scheme:light; }
+      .dg-chat-trigger { position:fixed; right:24px; bottom:24px; z-index:1000002; width:58px; height:58px; border:1px solid rgba(207,225,225,.17); border-radius:18px; color:#07100e; background:linear-gradient(145deg,#9bdecf,#70b9ab); box-shadow:0 14px 38px rgba(14,30,27,.38); cursor:pointer; display:grid; place-items:center; transition:.2s transform,.2s box-shadow; }
+      .dg-chat-trigger:hover { transform:translateY(-3px); box-shadow:0 18px 44px rgba(14,30,27,.48); }
+      .dg-chat-trigger svg { width:27px; height:27px; }
+      .dg-chat-trigger .dg-dot { position:absolute; right:3px; top:3px; width:12px; height:12px; border-radius:50%; background:#79c8b8; border:3px solid #10161a; }
+      .dg-chat-overlay { position:fixed; inset:0; z-index:1000000; background:rgba(3,7,9,.38); backdrop-filter:blur(3px); opacity:0; pointer-events:none; transition:opacity .18s ease; }
+      .dg-chat-overlay.dg-open { opacity:1; pointer-events:auto; }
+      .dg-chat-window { position:fixed; right:24px; bottom:94px; z-index:1000001; width:410px; height:650px; min-width:340px; min-height:430px; max-width:min(720px,calc(100vw - 32px)); max-height:calc(100vh - 48px); display:flex; flex-direction:column; overflow:hidden; resize:both; border:1px solid rgba(207,225,225,.14); border-radius:22px; background:var(--dg-panel); color:var(--dg-ink); box-shadow:0 30px 90px rgba(0,0,0,.46); opacity:0; transform:translateY(14px) scale(.98); pointer-events:none; transition:opacity .18s ease,transform .18s ease; }
+      .dg-chat-window.dg-open { opacity:1; transform:none; pointer-events:auto; }
+      .dg-chat-window.dg-minimized { height:64px !important; min-height:64px; resize:none; }
+      .dg-chat-window.dg-minimized .dg-toolbar,.dg-chat-window.dg-minimized .dg-messages,.dg-chat-window.dg-minimized .dg-composer,.dg-chat-window.dg-minimized .dg-footnote { display:none; }
+      .dg-header { height:72px; flex:none; padding:0 15px 0 18px; display:flex; align-items:center; gap:12px; background:var(--dg-header); color:var(--dg-header-ink); border-bottom:1px solid var(--dg-line); cursor:move; user-select:none; }
+      .dg-avatar { width:38px; height:38px; border-radius:13px; background:rgba(121,200,184,.10); border:1px solid rgba(121,200,184,.22); color:#9bdecf; display:grid; place-items:center; font-weight:750; }
+      .dg-title { min-width:0; flex:1; }
+      .dg-title strong { display:block; font-size:14px; letter-spacing:-.1px; font-weight:680; }
+      .dg-status { margin-top:2px; display:flex; align-items:center; gap:5px; font-size:11px; opacity:.83; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+      .dg-status i { width:6px; height:6px; border-radius:50%; background:#79c8b8; flex:none; box-shadow:0 0 0 3px rgba(121,200,184,.08); }
+      .dg-head-actions { display:flex; gap:3px; }
+      .dg-icon-btn { width:30px; height:30px; border:0; border-radius:9px; display:grid; place-items:center; background:transparent; color:inherit; cursor:pointer; font-size:17px; }
+      .dg-icon-btn:hover { background:rgba(255,255,255,.14); }
+      .dg-toolbar { flex:none; display:grid; grid-template-columns:minmax(0,1fr) 92px auto; align-items:center; gap:7px; padding:10px 12px; border-bottom:1px solid var(--dg-line); background:var(--dg-panel); }
+      .dg-model-wrap { min-width:0; position:relative; }
+      .dg-model,.dg-detail { width:100%; height:36px; padding:0 8px; border:1px solid var(--dg-line); border-radius:10px; background:var(--dg-soft); color:var(--dg-ink); font-size:11px; outline:none; cursor:pointer; appearance:auto; }
+      .dg-toolbar .dg-icon-btn { color:var(--dg-muted); background:var(--dg-soft); }
+      .dg-toolbar .dg-icon-btn:hover { color:var(--dg-ink); }
+      .dg-messages { position:relative; flex:1; min-height:0; overflow-y:auto; padding:17px 14px 20px; background:var(--dg-soft); scroll-behavior:smooth; }
+      .dg-history-more { display:none; margin:0 auto 14px; border:1px solid var(--dg-line); border-radius:999px; padding:6px 12px; background:var(--dg-panel); color:var(--dg-muted); font-size:11px; cursor:pointer; }
+      .dg-empty { margin:38px auto 18px; max-width:280px; text-align:center; color:var(--dg-muted); }
+      .dg-empty-icon { width:54px; height:54px; margin:0 auto 14px; display:grid; place-items:center; border-radius:16px; background:var(--dg-ai); border:1px solid var(--dg-line); color:var(--dg-blue-strong); font-size:23px; }
+      .dg-empty strong { display:block; color:var(--dg-ink); font-size:15px; margin-bottom:7px; }
+      .dg-empty p { margin:0; font-size:12px; line-height:1.65; }
+      .dg-row { display:flex; gap:7px; align-items:flex-end; margin:10px 0; }
+      .dg-row.user { justify-content:flex-end; }
+      .dg-row.assistant { justify-content:flex-start; }
+      .dg-mini-avatar { width:26px; height:26px; flex:none; display:grid; place-items:center; border-radius:9px; background:rgba(121,200,184,.11); border:1px solid rgba(121,200,184,.16); color:#9bdecf; font-size:10px; font-weight:750; }
+      .dg-light .dg-mini-avatar { background:#e4efec; color:#487d73; }
+      .dg-message-wrap { max-width:82%; min-width:42px; }
+      .dg-bubble { position:relative; border-radius:15px; padding:10px 12px; font-size:13px; line-height:1.66; overflow-wrap:anywhere; box-shadow:none; }
+      .dg-row.user .dg-bubble { background:var(--dg-user); color:white; border-bottom-right-radius:5px; }
+      .dg-row.assistant .dg-bubble { background:var(--dg-ai); color:var(--dg-ink); border:1px solid var(--dg-line); border-bottom-left-radius:5px; }
+      .dg-meta { display:flex; gap:7px; margin:4px 2px 0; color:var(--dg-muted); font-size:10px; }
+      .dg-row.user .dg-meta { justify-content:flex-end; }
+      .dg-copy-message { border:0; padding:0; background:none; color:inherit; font-size:10px; cursor:pointer; }
+      .dg-trace { margin:6px 2px 0; border:1px solid var(--dg-line); border-radius:9px; background:var(--dg-panel); color:var(--dg-muted); font-size:10px; }
+      .dg-trace summary { padding:6px 8px; cursor:pointer; user-select:none; }
+      .dg-trace-body { padding:0 8px 7px; display:grid; gap:3px; }
+      .dg-trace-item { display:flex; justify-content:space-between; gap:8px; }.dg-trace-ok{color:#79c8b8}.dg-trace-bad{color:#d66b73}
+      .dg-trace-step { padding:7px 0; border-bottom:1px solid var(--dg-line); line-height:1.55; }
+      .dg-trace-step strong { display:block; margin-bottom:2px; color:var(--dg-ink); font-size:10px; }
+      .dg-notice { width:max-content; max-width:88%; margin:11px auto; padding:6px 10px; border-radius:999px; background:rgba(106,130,145,.12); color:var(--dg-muted); font-size:10px; text-align:center; }
+      .dg-error { margin:9px 0; padding:9px 11px; border:1px solid #75413d; border-radius:11px; background:#442a29; color:#f0b7af; font-size:12px; }
+      .dg-light .dg-error { background:#fff1ef; border-color:#e6b6ae; color:#a2473e; }
+      .dg-typing { display:inline-flex; gap:4px; align-items:center; min-width:38px; min-height:21px; }
+      .dg-typing i { width:6px; height:6px; border-radius:50%; background:#8098a7; animation:dg-bounce 1s infinite ease-in-out; }
+      .dg-typing i:nth-child(2){animation-delay:.13s}.dg-typing i:nth-child(3){animation-delay:.26s}
+      @keyframes dg-bounce { 0%,60%,100%{transform:translateY(0);opacity:.5}30%{transform:translateY(-5px);opacity:1} }
+      .dg-bubble p { margin:0 0 7px; }.dg-bubble p:last-child{margin-bottom:0}
+      .dg-bubble h1,.dg-bubble h2,.dg-bubble h3 { margin:9px 0 6px; line-height:1.35; font-weight:750; }
+      .dg-bubble h1:first-child,.dg-bubble h2:first-child,.dg-bubble h3:first-child { margin-top:0; }
+      .dg-bubble h1 { font-size:16px; }.dg-bubble h2{font-size:15px}.dg-bubble h3{font-size:14px}
+      .dg-bubble ul,.dg-bubble ol { margin:5px 0 8px; padding-left:21px; }.dg-bubble li{margin:3px 0}
+      .dg-bubble blockquote { margin:7px 0; padding:5px 9px; border-left:3px solid #8da8b8; color:var(--dg-muted); background:rgba(105,134,151,.08); border-radius:0 7px 7px 0; }
+      .dg-bubble hr { margin:9px 0; border:0; border-top:1px solid var(--dg-line); }
+      .dg-bubble a { color:#39769c; text-decoration:none; border-bottom:1px dotted currentColor; }.dg-row.user .dg-bubble a{color:#fff}
+      .dg-bubble code:not(pre code){padding:1px 4px;border-radius:4px;background:rgba(79,105,120,.12);font:11px ui-monospace,SFMono-Regular,Consolas,monospace}
+      .dg-table-wrap { margin:7px 0; overflow-x:auto; border:1px solid var(--dg-line); border-radius:8px; }
+      .dg-bubble table { width:100%; border-collapse:collapse; font-size:11px; }.dg-bubble th,.dg-bubble td{padding:6px 7px;border-bottom:1px solid var(--dg-line);text-align:left;vertical-align:top}.dg-bubble th{background:rgba(93,124,142,.10);font-weight:700}.dg-bubble tr:last-child td{border-bottom:0}
+      .dg-code { margin:8px 0 2px; overflow:hidden; border:1px solid #334953; border-radius:10px; background:#1e2b32; color:#dbe8ed; }
+      .dg-code-head { height:30px; padding:0 9px; display:flex; justify-content:space-between; align-items:center; color:#9fb4bf; background:#263840; font-size:10px; }
+      .dg-code-copy { border:0; background:none; color:#bdd0d9; cursor:pointer; font-size:10px; }
+      .dg-code pre { margin:0; padding:11px; overflow:auto; font:11px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace; white-space:pre; }
+      .dg-kw { color:#8ec9ff; font-weight:700; }.dg-str{color:#acd98b}.dg-num{color:#e9bd7c}
+      .dg-light .dg-code { border-color:#d4e0dc; background:#f7faf9; color:#253632; }
+      .dg-light .dg-code-head { color:#5d706b; background:#e8f0ed; }
+      .dg-light .dg-code-copy { color:#315f57; }
+      .dg-light .dg-kw { color:#276d90; }.dg-light .dg-str{color:#54772d}.dg-light .dg-num{color:#9b6228}
+      .dg-light .dg-chat-window { border-color:#d6e1de;box-shadow:0 24px 70px rgba(38,66,60,.18); }
+      .dg-light .dg-chat-overlay { background:rgba(50,76,70,.16); }
+      .dg-light .dg-chat-trigger .dg-dot { border-color:#f7faf9; }
+      .dg-composer { position:relative; z-index:2; flex:none; min-height:92px; padding:10px 11px 8px; border-top:1px solid var(--dg-line); background:var(--dg-panel); }
+      .dg-compose-label { margin:0 2px 7px; color:var(--dg-muted); font-size:10px; font-weight:650; letter-spacing:.04em; }
+      .dg-input-shell { display:flex; align-items:flex-end; gap:7px; min-height:48px; padding:6px 6px 6px 11px; border:1px solid rgba(121,200,184,.28); border-radius:14px; background:var(--dg-soft); transition:border-color .15s,box-shadow .15s; }
+      .dg-input-shell:focus-within { border-color:#79c8b8; box-shadow:0 0 0 3px rgba(121,200,184,.10); }
+      .dg-input { display:block; flex:1; width:100%; min-height:30px; max-height:98px; padding:6px 0; resize:none; border:0; outline:0; background:transparent; color:var(--dg-ink); font:13px/1.45 inherit; }
+      .dg-input::placeholder { color:#91a0a9; }
+      .dg-send { width:34px; height:34px; flex:none; border:0; border-radius:10px; display:grid; place-items:center; color:#07100e; background:var(--dg-blue); cursor:pointer; transition:.15s; }
+      .dg-send:hover { background:var(--dg-blue-strong); transform:translateY(-1px); }.dg-send:disabled{opacity:.42;cursor:not-allowed}
+      .dg-footnote { flex:none; padding:0 12px 8px; background:var(--dg-panel); color:var(--dg-muted); text-align:center; font-size:9px; }
+      @media (max-width:700px) {
+        .dg-chat-trigger { right:16px; bottom:16px; width:54px; height:54px; }
+        .dg-chat-overlay { background:rgba(20,31,37,.34); }
+        .dg-chat-window { left:0 !important; right:0 !important; top:auto !important; bottom:0 !important; width:100% !important; height:min(76vh,680px) !important; max-width:none; max-height:88vh; min-width:0; border-radius:20px 20px 0 0; resize:none; }
+        .dg-header { cursor:default; }.dg-message-wrap{max-width:86%}
+      }
+    </style>
+    <div class="dg-chat-overlay" aria-hidden="true"></div>
+    <section class="dg-chat-window" role="dialog" aria-label="DermaGuard 智能助手" aria-modal="true">
+      <header class="dg-header">
+        <div class="dg-avatar">D</div>
+        <div class="dg-title"><strong>DermaGuard 智能助手</strong><span class="dg-status"><i></i><span class="dg-status-text">本地工具已连接</span></span></div>
+        <div class="dg-head-actions">
+          <button class="dg-icon-btn dg-minimize" title="最小化" aria-label="最小化">−</button>
+          <button class="dg-icon-btn dg-close" title="关闭" aria-label="关闭">×</button>
+        </div>
+      </header>
+      <div class="dg-toolbar">
+        <div class="dg-model-wrap"><select class="dg-model" aria-label="选择对话模型"><option>正在读取模型…</option></select></div>
+        <select class="dg-detail" aria-label="回答详细度"><option value="concise">简明回答</option><option value="detailed">详细归因</option></select>
+        <button class="dg-icon-btn dg-clear" title="清空对话" aria-label="清空对话">⌫</button>
+      </div>
+      <main class="dg-messages" aria-live="polite">
+        <button class="dg-history-more">加载更早消息</button>
+        <div class="dg-message-list"></div>
+      </main>
+      <footer class="dg-composer">
+        <div class="dg-compose-label">继续询问智能助手</div>
+        <div class="dg-input-shell">
+          <textarea class="dg-input" rows="1" maxlength="2000" placeholder="输入你的问题，按 Enter 发送"></textarea>
+          <button class="dg-send" title="发送" aria-label="发送">➤</button>
+        </div>
+      </footer>
+      <div class="dg-footnote">人工智能仅用于辅助筛查和分级转诊，不构成医学诊断</div>
+    </section>
+    <button class="dg-chat-trigger" title="打开智能助手" aria-label="打开智能助手">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 11.5a7.8 7.8 0 0 1-8.2 7.5 9.3 9.3 0 0 1-3.7-.8L4 20l1.1-3.5A7.1 7.1 0 0 1 4 12.7 7.8 7.8 0 0 1 12.2 5 7.8 7.8 0 0 1 20 11.5Z"/><path d="M8.5 11.8h.01M12 11.8h.01M15.5 11.8h.01" stroke-linecap="round" stroke-width="2.4"/></svg>
+      <span class="dg-dot"></span>
+    </button>`;
+  doc.body.appendChild(host);
+
+  const $ = (selector) => host.querySelector(selector);
+  const trigger = $(".dg-chat-trigger"), overlay = $(".dg-chat-overlay"), panel = $(".dg-chat-window");
+  const header = $(".dg-header"), messages = $(".dg-messages"), list = $(".dg-message-list");
+  const input = $(".dg-input"), send = $(".dg-send"), modelSelect = $(".dg-model"), detailSelect = $(".dg-detail");
+  const statusText = $(".dg-status-text"), moreButton = $(".dg-history-more");
+  const storageKey = `dermaguard-chat:${cfg.caseId || "no-case"}`;
+  let allHistory = [], shownFrom = 0, busy = false;
+
+  function saveUi() {
+    const rect = panel.getBoundingClientRect();
+    storage.setItem("dg-chat-ui-v2", JSON.stringify({open:panel.classList.contains("dg-open"), light:host.classList.contains("dg-light"), model:modelSelect.value, detail:detailSelect.value, left:panel.style.left, top:panel.style.top, width:rect.width, height:rect.height}));
+  }
+  let saved = {};
+  storage.removeItem("dg-chat-ui");
+  try { saved = JSON.parse(storage.getItem("dg-chat-ui-v2") || "{}"); } catch (_) {}
+  if (saved.detail === "detailed") detailSelect.value="detailed";
+  if (saved.width && parentWindow.innerWidth > 700) {
+    panel.style.width=Math.min(parentWindow.innerWidth-16,Math.max(340,saved.width))+"px";
+    panel.style.height=Math.min(parentWindow.innerHeight-16,Math.max(430,saved.height))+"px";
+  }
+  if (saved.left && parentWindow.innerWidth > 700) {
+    panel.style.left=saved.left; panel.style.top=saved.top; panel.style.right="auto"; panel.style.bottom="auto";
+  }
+
+  function clampPanel() {
+    if (parentWindow.innerWidth <= 700) return;
+    const rect=panel.getBoundingClientRect();
+    const width=Math.min(rect.width,parentWindow.innerWidth-16);
+    const height=Math.min(rect.height,parentWindow.innerHeight-16);
+    panel.style.width=width+"px"; panel.style.height=height+"px";
+    if (panel.style.left) {
+      panel.style.left=Math.max(8,Math.min(parentWindow.innerWidth-width-8,rect.left))+"px";
+      panel.style.top=Math.max(8,Math.min(parentWindow.innerHeight-height-8,rect.top))+"px";
+    }
+  }
+  setTimeout(clampPanel,0);
+  parentWindow.addEventListener("resize",clampPanel);
+
+  function setOpen(open) {
+    if (open) panel.classList.remove("dg-minimized");
+    panel.classList.toggle("dg-open", open); overlay.classList.toggle("dg-open", open);
+    overlay.setAttribute("aria-hidden", String(!open));
+    if (open) setTimeout(() => { clampPanel(); input.focus(); }, 120);
+    saveUi();
+  }
+  trigger.onclick = () => setOpen(!panel.classList.contains("dg-open"));
+  overlay.onclick = (event) => { if (event.target === overlay) setOpen(false); };
+  $(".dg-close").onclick = () => setOpen(false);
+  $(".dg-minimize").onclick = () => { panel.classList.toggle("dg-minimized"); saveUi(); };
+
+  let dragging = false, dx = 0, dy = 0;
+  header.addEventListener("pointerdown", (event) => {
+    if (parentWindow.innerWidth <= 700 || event.target.closest("button")) return;
+    const rect = panel.getBoundingClientRect(); dragging=true; dx=event.clientX-rect.left; dy=event.clientY-rect.top;
+    header.setPointerCapture(event.pointerId);
+  });
+  header.addEventListener("pointermove", (event) => {
+    if (!dragging) return;
+    const left=Math.max(8,Math.min(parentWindow.innerWidth-panel.offsetWidth-8,event.clientX-dx));
+    const top=Math.max(8,Math.min(parentWindow.innerHeight-panel.offsetHeight-8,event.clientY-dy));
+    panel.style.left=left+"px"; panel.style.top=top+"px"; panel.style.right="auto"; panel.style.bottom="auto";
+  });
+  header.addEventListener("pointerup", () => { dragging=false; saveUi(); });
+  new parentWindow.ResizeObserver(() => { if (panel.classList.contains("dg-open") && !dragging) saveUi(); }).observe(panel);
+
+  const escapeHtml = (value) => String(value).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  function highlight(code, language) {
+    let safe = escapeHtml(code);
+    if ((language || "").toLowerCase() === "cypher") {
+      safe = safe.replace(/\b(MATCH|OPTIONAL|WHERE|RETURN|CREATE|MERGE|DELETE|DETACH|SET|REMOVE|WITH|UNWIND|ORDER BY|LIMIT|SKIP|AS|AND|OR|NOT|IN|CONTAINS|STARTS WITH|ENDS WITH)\b/gi, '<span class="dg-kw">$1</span>');
+      safe = safe.replace(/(&quot;.*?&quot;|&#39;.*?&#39;)/g, '<span class="dg-str">$1</span>').replace(/\b(\d+(?:\.\d+)?)\b/g,'<span class="dg-num">$1</span>');
+    }
+    return safe;
+  }
+  function formatInline(value) {
+    const fragments=[];
+    const keep=(html) => { const token=`@@DGINLINE${fragments.length}@@`; fragments.push(html); return token; };
+    let source=String(value);
+    source=source.replace(/`([^`\n]+)`/g,(_,code)=>keep(`<code>${escapeHtml(code)}</code>`));
+    source=source.replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g,(match,label,url)=>{
+      try {
+        const parsed=new URL(url,parentWindow.location.href);
+        if (!['http:','https:','mailto:'].includes(parsed.protocol)) return match;
+        return keep(`<a href="${escapeHtml(parsed.href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`);
+      } catch (_) { return match; }
+    });
+    source=escapeHtml(source)
+      .replace(/\*\*([^*\n]+)\*\*/g,'<strong>$1</strong>')
+      .replace(/__([^_\n]+)__/g,'<strong>$1</strong>')
+      .replace(/(^|[^*])\*([^*\n]+)\*/g,'$1<em>$2</em>')
+      .replace(/~~([^~\n]+)~~/g,'<del>$1</del>');
+    fragments.forEach((html,index)=>{ source=source.split(`@@DGINLINE${index}@@`).join(html); });
+    return source;
+  }
+  function formatMarkdown(text) {
+    const codeBlocks=[];
+    const source=String(text).replace(/\r\n?/g,"\n").replace(/```([\w-]*)\n?([\s\S]*?)```/g,(_,lang,code)=>{
+      const token=`@@DGCODE${codeBlocks.length}@@`;
+      codeBlocks.push(`<div class="dg-code"><div class="dg-code-head"><span>${escapeHtml(lang || "代码")}</span><button class="dg-code-copy">复制代码</button></div><pre><code>${highlight(code.replace(/\n$/, ""),lang)}</code></pre></div>`);
+      return `\n${token}\n`;
+    });
+    const html=[]; let paragraph=[]; let listTag="";
+    const flushParagraph=()=>{ if(paragraph.length){ html.push(`<p>${paragraph.join("<br>")}</p>`); paragraph=[]; } };
+    const closeList=()=>{ if(listTag){ html.push(`</${listTag}>`); listTag=""; } };
+    const lines=source.split("\n");
+    const tableSeparator=/^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/;
+    const tableCells=(value)=>value.trim().replace(/^\|/,"").replace(/\|$/,"").split("|").map(item=>item.trim());
+    for(let lineIndex=0;lineIndex<lines.length;lineIndex++){
+      const rawLine=lines[lineIndex];
+      const line=rawLine.trimEnd();
+      if(line.includes("|") && lineIndex+1<lines.length && tableSeparator.test(lines[lineIndex+1])){
+        flushParagraph(); closeList();
+        const headers=tableCells(line); const rows=[]; lineIndex+=2;
+        while(lineIndex<lines.length && lines[lineIndex].includes("|") && lines[lineIndex].trim()){
+          rows.push(tableCells(lines[lineIndex])); lineIndex++;
+        }
+        lineIndex--;
+        const head=headers.map(item=>`<th>${formatInline(item)}</th>`).join("");
+        const body=rows.map(row=>`<tr>${row.map(item=>`<td>${formatInline(item)}</td>`).join("")}</tr>`).join("");
+        html.push(`<div class="dg-table-wrap"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`);
+        continue;
+      }
+      const codeMatch=line.trim().match(/^@@DGCODE(\d+)@@$/);
+      if(codeMatch){ flushParagraph(); closeList(); html.push(codeBlocks[Number(codeMatch[1])] || ""); continue; }
+      if(!line.trim()){ flushParagraph(); closeList(); continue; }
+      const heading=line.match(/^(#{1,3})\s+(.+)$/);
+      if(heading){ flushParagraph(); closeList(); const level=heading[1].length; html.push(`<h${level}>${formatInline(heading[2])}</h${level}>`); continue; }
+      if(/^\s*(?:---+|___+|\*\*\*+)\s*$/.test(line)){ flushParagraph(); closeList(); html.push("<hr>"); continue; }
+      const quote=line.match(/^\s*>\s?(.*)$/);
+      if(quote){ flushParagraph(); closeList(); html.push(`<blockquote>${formatInline(quote[1])}</blockquote>`); continue; }
+      const unordered=line.match(/^\s*[-+*]\s+(.+)$/);
+      const ordered=line.match(/^\s*\d+[.)]\s+(.+)$/);
+      if(unordered || ordered){
+        flushParagraph(); const nextTag=unordered ? "ul" : "ol";
+        if(listTag!==nextTag){ closeList(); listTag=nextTag; html.push(`<${listTag}>`); }
+        html.push(`<li>${formatInline((unordered || ordered)[1])}</li>`); continue;
+      }
+      closeList(); paragraph.push(formatInline(line));
+    }
+    flushParagraph(); closeList();
+    return html.join("") || "<p></p>";
+  }
+  function bindCopies(scope) {
+    scope.querySelectorAll(".dg-code-copy").forEach(button => button.onclick = async () => { await parentWindow.navigator.clipboard.writeText(button.closest(".dg-code").querySelector("code").textContent); button.textContent="已复制"; setTimeout(()=>button.textContent="复制代码",1100); });
+  }
+  function timeLabel(value) { try { return value ? new Date(value).toLocaleTimeString("zh-CN",{hour:"2-digit",minute:"2-digit"}) : "刚刚"; } catch (_) { return ""; } }
+  function makeMessage(role, text, options={}) {
+    const row=doc.createElement("div"); row.className=`dg-row ${role}`;
+    const avatar=role === "assistant" ? '<div class="dg-mini-avatar">AI</div>' : '';
+    row.innerHTML=`${avatar}<div class="dg-message-wrap"><div class="dg-bubble"></div><div class="dg-meta"><span>${timeLabel(options.timestamp)}</span>${role === "assistant" ? '<button class="dg-copy-message">复制</button>' : ''}</div></div>`;
+    const bubble=row.querySelector(".dg-bubble");
+    if (options.loading) bubble.innerHTML='<span class="dg-typing"><i></i><i></i><i></i></span>';
+    else { bubble.innerHTML=formatMarkdown(text); bindCopies(bubble); }
+    const copy=row.querySelector(".dg-copy-message");
+    if (copy) copy.onclick=async()=>{ await parentWindow.navigator.clipboard.writeText(text); copy.textContent="已复制"; setTimeout(()=>copy.textContent="复制",1100); };
+    list.appendChild(row); return {row,bubble};
+  }
+  function addNotice(text) { const node=doc.createElement("div"); node.className="dg-notice"; node.textContent=text; list.appendChild(node); }
+  function renderTrace(row,payload) {
+    const labels={get_visual_evidence:"读取视觉证据",get_triage_result:"读取本地分级",search_guideline:"检索本地指南",get_care_pathway:"读取照护路径",get_privacy_report:"读取隐私报告",get_contextual_assessment:"读取症状校准"};
+    const details=doc.createElement("details"); details.className="dg-trace";
+    const calls=Array.isArray(payload.tool_calls) ? payload.tool_calls : [];
+    const items=calls.map(item=>`<div class="dg-trace-item"><span>${escapeHtml(labels[item.tool_name] || item.tool_name)}</span><span class="${item.status === 'success' ? 'dg-trace-ok' : 'dg-trace-bad'}">${item.status === 'success' ? '✓' : '异常'} ${Math.round(item.latency_ms || 0)} 毫秒</span></div>`).join("");
+    const privacy=payload.privacy_status === "SAFE" ? '<span class="dg-trace-ok">✓ 安全</span>' : '<span class="dg-trace-bad">已阻止</span>';
+    const steps=Array.isArray(payload.agent_trace) ? payload.agent_trace : [];
+    const stepItems=steps.map(step=>{
+      const missing=(step.missing_information || []).length ? `<div>信息缺口：${(step.missing_information || []).map(escapeHtml).join("、")}</div>` : "";
+      const observations=(step.observation_summary || []).length ? `<div>观察摘要：${(step.observation_summary || []).map(escapeHtml).join("；")}</div>` : "";
+      const query=step.retrieval_query ? `<div>检索语句：${escapeHtml(step.retrieval_query)}</div>` : "";
+      return `<div class="dg-trace-step"><strong>步骤 ${step.step} · ${escapeHtml(step.intent || "检索决策")}</strong><div>决策：${escapeHtml(step.decision || "")}</div>${query}${missing}${observations}</div>`;
+    }).join("");
+    details.innerHTML=`<summary>Agent Trace · ${steps.length} 步 / ${calls.length} 个工具</summary><div class="dg-trace-body">${stepItems}${items}<div class="dg-trace-item"><span>隐私出境检查</span>${privacy}</div><div class="dg-trace-item"><span>解释模型</span><span>${escapeHtml(payload.model || payload.provider || "未知")}</span></div></div>`;
+    row.querySelector(".dg-message-wrap").insertBefore(details,row.querySelector(".dg-meta"));
+  }
+  function renderHistory() {
+    list.innerHTML="";
+    if (!allHistory.length) {
+      list.innerHTML=`<div class="dg-empty"><div class="dg-empty-icon">✦</div><strong>你好，我是智能分诊助手</strong><p>${cfg.caseId ? "可以询问筛查依据、下一步安排或隐私保护情况。" : "请先在主页面上传图片并完成本地分析。"}</p></div>`;
+    } else allHistory.slice(shownFrom).forEach(item => makeMessage(item.role === "user" ? "user" : "assistant", item.message || item.content || "", {timestamp:item.timestamp}));
+    moreButton.style.display=shownFrom>0 ? "block" : "none"; messages.scrollTop=messages.scrollHeight;
+  }
+  moreButton.onclick=()=>{ const oldHeight=messages.scrollHeight; shownFrom=Math.max(0,shownFrom-20); renderHistory(); messages.scrollTop=messages.scrollHeight-oldHeight; };
+
+  async function loadModels() {
+    try {
+      const response=await fetch(`${cfg.apiUrl}/v1/chat/models`,{headers:authHeaders}); if (!response.ok) throw new Error("模型列表读取失败");
+      const models=await response.json(); modelSelect.innerHTML="";
+      models.forEach(model=>{ const option=doc.createElement("option"); option.value=model.id; option.textContent=`${model.label}${model.available ? "" : ` · ${model.status}`}`; option.disabled=!model.available; modelSelect.appendChild(option); });
+      const preferred=saved.model || cfg.defaultModel; const target=[...modelSelect.options].find(option=>option.value===preferred && !option.disabled) || [...modelSelect.options].find(option=>!option.disabled);
+      if (target) modelSelect.value=target.value; else { modelSelect.innerHTML='<option>暂无可用模型</option>'; send.disabled=true; }
+      statusText.textContent=target ? `${target.textContent} 已连接` : "暂无可用云模型";
+    } catch (error) { modelSelect.innerHTML='<option>模型状态读取失败</option>'; statusText.textContent="后端连接异常"; }
+  }
+  modelSelect.onchange=()=>{ statusText.textContent=`${modelSelect.options[modelSelect.selectedIndex].textContent} 已选择`; addNotice("已切换模型，当前对话上下文继续保留"); saveUi(); messages.scrollTop=messages.scrollHeight; };
+  detailSelect.onchange=()=>{ addNotice(detailSelect.value === "detailed" ? "已切换为详细归因模式" : "已切换为简明回答模式"); saveUi(); messages.scrollTop=messages.scrollHeight; };
+
+  async function loadHistory() {
+    if (!cfg.caseId) { renderHistory(); return; }
+    try { const response=await fetch(`${cfg.apiUrl}/v1/cases/${encodeURIComponent(cfg.caseId)}/chat-history`,{headers:authHeaders}); if (!response.ok) throw new Error(); allHistory=await response.json(); shownFrom=Math.max(0,allHistory.length-20); renderHistory(); }
+    catch (_) { renderHistory(); addNotice("历史对话暂时无法读取"); }
+  }
+  $(".dg-clear").onclick=async()=>{
+    if (!cfg.caseId || !parentWindow.confirm("确认清空当前病例的对话历史吗？")) return;
+    try { const response=await fetch(`${cfg.apiUrl}/v1/cases/${encodeURIComponent(cfg.caseId)}/chat-history`,{method:"DELETE",headers:authHeaders}); if(!response.ok) throw new Error(); allHistory=[]; shownFrom=0; storage.removeItem(storageKey); renderHistory(); }
+    catch (_) { addNotice("清空失败，请检查后端连接"); }
+  };
+
+  async function typeAnswer(bubble,text) {
+    bubble.textContent="";
+    for (let index=0; index<text.length; index++) { bubble.textContent+=text[index]; messages.scrollTop=messages.scrollHeight; await new Promise(resolve=>setTimeout(resolve,"。！？；\n".includes(text[index]) ? 55 : 13)); }
+    bubble.innerHTML=formatMarkdown(text); bindCopies(bubble);
+  }
+  async function submit() {
+    const text=input.value.trim(); if (!text || busy) return;
+    if (!cfg.caseId) { addNotice("请先在主页面完成图片分析，再开始对话"); messages.scrollTop=messages.scrollHeight; return; }
+    busy=true; send.disabled=true; input.value=""; input.style.height="auto";
+    if (list.querySelector(".dg-empty")) list.innerHTML="";
+    makeMessage("user",text); const pending=makeMessage("assistant","",{loading:true}); messages.scrollTop=messages.scrollHeight;
+    statusText.textContent="正在调用本地工具与模型…";
+    try {
+      const response=await fetch(`${cfg.apiUrl}/v1/chat`,{method:"POST",headers:{"Content-Type":"application/json",...authHeaders},body:JSON.stringify({case_id:cfg.caseId,message:text,mode:cfg.mode,model:modelSelect.value,detail_level:detailSelect.value})});
+      let payload={}; try { payload=await response.json(); } catch (_) {}
+      if (!response.ok) throw new Error(payload.detail || `请求失败（${response.status}）`);
+      const meta=pending.row.querySelector(".dg-meta"); meta.innerHTML=`<span>${payload.model || modelSelect.value}</span><button class="dg-copy-message">复制</button>`;
+      const copy=meta.querySelector("button"); copy.onclick=async()=>{await parentWindow.navigator.clipboard.writeText(payload.response);copy.textContent="已复制";setTimeout(()=>copy.textContent="复制",1100);};
+      await typeAnswer(pending.bubble,payload.response);
+      renderTrace(pending.row,payload);
+      statusText.textContent=`${payload.model || modelSelect.value} · 已完成`;
+    } catch (error) {
+      pending.row.remove(); const node=doc.createElement("div"); node.className="dg-error"; node.textContent=`调用失败：${error.message || "网络异常"}`; list.appendChild(node); statusText.textContent="请求失败，请重试";
+    } finally { busy=false; send.disabled=false; input.focus(); messages.scrollTop=messages.scrollHeight; }
+  }
+  send.onclick=submit;
+  input.addEventListener("input",()=>{ input.style.height="auto"; input.style.height=Math.min(input.scrollHeight,98)+"px"; });
+  input.addEventListener("keydown",event=>{ if(event.key==="Enter"&&!event.shiftKey){event.preventDefault();submit();} });
+
+  Promise.all([loadModels(),loadHistory()]).then(()=>{ if(saved.open) setOpen(true); });
+})();
+</script>
