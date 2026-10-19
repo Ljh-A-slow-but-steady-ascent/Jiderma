@@ -39,9 +39,8 @@ def test_high_risk_in_top3_requires_referral_not_priority():
     assert result.level == CarePathwayLevel.REFERRAL
 
 
-def test_supervised_head_ignores_low_probability_high_risk_tail():
-    visual = evidence("nevus", rest=["melanoma", "benign keratosis"])
-    visual.prediction_mode = "supervised_linear_probe"
+def test_multimodal_model_ignores_low_score_high_risk_tail():
+    visual = evidence("nevus", rest=["melanoma", "seborrheic keratosis"])
     visual.top_predictions[0].score = 0.86
     visual.top_predictions[1].score = 0.13
     visual.top_predictions[2].score = 0.01

@@ -4,12 +4,12 @@ import pytest
 
 from backend.app.care.schemas import CandidatePrediction, VisualEvidence
 from backend.app.database import CaseRepository, init_database
+from backend.app.mcp.server import create_mcp_server
 from backend.app.services.care_service import CareService
 from backend.app.services.case_service import CaseService
+from backend.app.services.container import create_service_container
 from backend.app.services.knowledge_service import KnowledgeService
 from backend.app.services.triage_service import TriagePolicyService
-from backend.app.services.container import create_service_container
-from backend.app.mcp.server import create_mcp_server
 
 
 @pytest.fixture
@@ -19,16 +19,14 @@ def anyio_backend():
 
 @pytest.fixture
 def mcp_case(tmp_path):
-    db_path = tmp_path / "mcp-smoke.db"
-    database_url = f"sqlite:///{db_path}"
-    repository = CaseRepository(init_database(database_url))
+    repository = CaseRepository(init_database(f"sqlite:///{tmp_path / 'mcp.db'}"))
     case_service = CaseService(repository, data_root=tmp_path / "cases")
     sample = Path("third_party/DermFM-Zero/examples/PAT_8_15_820.png").read_bytes()
     case_id = case_service.create(sample, "image/png")
     visual = VisualEvidence(
         case_id=case_id,
-        model="DermFM-Zero-Open",
-        candidate_set="pad6",
+        model="local_multimodal_classifier",
+        candidate_set="pad_clinical_multimodal_v1",
         top_predictions=[
             CandidatePrediction(label="basal cell carcinoma", score=0.9),
             CandidatePrediction(label="nevus", score=0.07),
@@ -42,29 +40,29 @@ def mcp_case(tmp_path):
     triage = TriagePolicyService(repository=repository).evaluate(visual)
     knowledge = KnowledgeService()
     chunks = knowledge.search("优先转诊", top_k=2)
-    CareService(repository=repository).recommend(visual, triage, knowledge.references(chunks))
+    CareService(repository=repository).recommend(
+        visual, triage, knowledge.references(chunks)
+    )
     return case_id, repository
 
 
 @pytest.mark.anyio
-async def test_real_mcp_sdk_list_tools_and_call_tool(mcp_case):
+async def test_real_mcp_sdk_lists_and_calls_all_tools(mcp_case):
     case_id, repository = mcp_case
     server = create_mcp_server(create_service_container(repository))
-    listed = await server.list_tools()
-    assert {item.name for item in listed} == {
+    assert {item.name for item in await server.list_tools()} == {
         "get_visual_evidence",
         "get_triage_result",
         "search_guideline",
         "get_care_pathway",
         "get_privacy_report",
-        "get_contextual_assessment",
     }
-    for name, arguments in [
+    calls = (
         ("get_visual_evidence", {"case_id": case_id}),
         ("get_triage_result", {"case_id": case_id}),
         ("search_guideline", {"query": "为什么优先转诊", "case_id": case_id}),
         ("get_care_pathway", {"case_id": case_id}),
         ("get_privacy_report", {"case_id": case_id}),
-    ]:
-        result = await server.call_tool(name, arguments)
-        assert result
+    )
+    for name, arguments in calls:
+        assert await server.call_tool(name, arguments)

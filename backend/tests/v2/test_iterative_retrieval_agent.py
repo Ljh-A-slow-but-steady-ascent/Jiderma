@@ -8,6 +8,7 @@ import pytest
 from backend.app.chat import DermaGuardChatAgent
 from backend.app.chat.mock import MockChatProvider
 from backend.app.chat.schemas import ChatRequest, RetrievalDecision
+from backend.app.auth import hash_password
 from backend.app.care.schemas import CandidatePrediction, VisualEvidence
 from backend.app.database import CaseRepository, init_database
 from backend.app.mcp.factory import create_tool_registry
@@ -52,15 +53,14 @@ async def _respond(agent, case_id: str, message: str):
 
 
 @pytest.mark.anyio
-async def test_agent_asks_for_missing_structured_evidence(chat_setup):
+async def test_agent_retrieves_instead_of_starting_a_second_symptom_interview(chat_setup):
     case_id, repository, agent = chat_setup
     response = await _respond(agent, case_id, "这个黑色痣危险吗？")
-    assert "近几个月" in response.response
-    assert "症状核验" in response.response
-    assert response.agent_trace[-1].decision == "ASK_USER_FOR_EVIDENCE"
-    assert response.agent_trace[-1].missing_information
+    assert "症状核验" not in response.response
+    assert response.agent_trace[0].decision == "RETRIEVE_AND_OBSERVE"
+    assert any(item.tool_name == "search_guideline" for item in response.tool_calls)
     stored = repository.list_agent_traces(case_id)
-    assert stored[-1]["intent"] == "clarify_risk_evidence"
+    assert stored[-1]["decision"] == "ANSWER_WITH_EVIDENCE"
 
 
 @pytest.mark.anyio
@@ -74,6 +74,31 @@ async def test_agent_retrieves_then_judges_evidence(chat_setup):
     assert response.agent_trace[0].retrieval_query
     assert response.agent_trace[1].evidence_sufficient is True
     assert any(item.tool_name == "search_guideline" for item in response.tool_calls)
+
+
+def test_agentic_rag_context_uses_deidentified_clinical_narrative(chat_setup):
+    case_id, repository, agent = chat_setup
+    user = repository.create_user("doctor", hash_password("test"), "测试医生")
+    patient = repository.create_patient(
+        name="张某", sex="男", age=61, outpatient_no="SECRET-001",
+        phone="13800138000", medical_history="", allergy_history="", created_by=user.id,
+    )
+    repository.link_case_patient(
+        case_id, patient.patient_id, "面部",
+        "张某面部病灶近期增大并出血，电话13800138000。",
+        {
+            "age": 61, "gender": "MALE", "region": "FACE",
+            "itch": False, "hurt": False, "bleed": True, "grew": True,
+            "changed": True, "diameter_1": 9, "diameter_2": 8,
+            "skin_cancer_history": False, "cancer_history": False,
+        },
+    )
+    context = agent._public_case_context(case_id, "clinician")
+    assert "近期增大并出血" in context["clinical_narrative"]
+    assert "张某" not in context["clinical_narrative"]
+    assert "13800138000" not in context["clinical_narrative"]
+    query = agent._default_query("请检索", {}, context["clinical_narrative"])
+    assert "近期增大并出血" in query
 
 
 @pytest.mark.anyio

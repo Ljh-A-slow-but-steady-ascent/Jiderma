@@ -51,18 +51,15 @@ class MockChatProvider:
         message = str(payload.get("user_message", ""))
         lowered = message.lower()
         case_evidence = payload.get("case_evidence") or {}
-        retrievals = payload.get("retrieval_observations") or []
-        history = payload.get("recent_history") or []
-        has_context = bool(payload.get("public_case_context", {}).get("has_contextual_assessment"))
-        already_asked = any(
-            item.get("role") == "assistant" and "症状核验" in str(item.get("message", ""))
-            for item in history[-3:]
+        clinical_narrative = str(
+            (payload.get("public_case_context") or {}).get("clinical_narrative") or ""
         )
+        retrievals = payload.get("retrieval_observations") or []
 
         privacy = any(item in lowered for item in ["原始图片", "base64", "上传到云", "发给云端"])
         explain = any(item in message for item in ["为什么", "为何", "原因", "归因", "依据", "解释", "危险", "什么病", "是不是"])
         next_step = any(item in message for item in ["下一步", "怎么办", "进一步检查", "去哪里"])
-        visual_only = any(item in message for item in ["候选", "看到了什么", "可靠", "模型"])
+        visual_only = any(item in message for item in ["候选分数", "看到了什么"])
         treatment = any(item in message for item in ["药", "治疗", "处方"])
         definition = is_medical_definition_question(message)
 
@@ -90,16 +87,7 @@ class MockChatProvider:
             plan = {"intent": "explain_visual_evidence", "evidence_sufficient": True,
                     "reasoning_summary": "当前病例证据足以解释视觉候选。"}
         else:
-            ambiguous = any(item in message for item in ["黑色痣危险吗", "这个痣危险吗", "是不是癌"])
-            if ambiguous and not has_context and not already_asked:
-                plan = {
-                    "intent": "clarify_risk_evidence",
-                    "missing_information": ["近期大小或颜色变化", "是否自行出血"],
-                    "should_ask_user": True, "evidence_sufficient": False,
-                    "clarification_question": "这个病灶近几个月有没有明显增大、颜色改变或自行出血？请同时在主页“症状核验”区完成结构化填写。",
-                    "reasoning_summary": "当前缺少病灶近期变化与出血信息。",
-                }
-            elif retrievals:
+            if retrievals:
                 latest = retrievals[-1]
                 sufficient = bool((latest.get("evidence_assembly") or {}).get("evidence_sufficient"))
                 plan = {
@@ -115,7 +103,7 @@ class MockChatProvider:
                 level = str(triage.get("level", ""))
                 plan = {
                     "intent": "care_guidance" if next_step else "treatment_boundary" if treatment else "explain_triage" if explain else "general_case_question",
-                    "retrieval_query": f"{message} {labels} {level} 危险征象 鉴别 检查 转诊指南".strip(),
+                    "retrieval_query": f"{message} {clinical_narrative} {labels} {level} 危险征象 鉴别 检查 转诊指南".strip(),
                     "evidence_sufficient": False,
                     "reasoning_summary": "根据当前病例状态生成一条医学检索语句。",
                 }
@@ -141,7 +129,7 @@ class MockChatProvider:
         care = tool_results.get("get_care_pathway", {})
         visual = tool_results.get("get_visual_evidence", {})
         guidelines = tool_results.get("search_guideline", {}).get("chunks", [])
-        contextual = tool_results.get("get_contextual_assessment", {})
+        clinical = visual.get("clinical_context") or {}
         level = triage.get("level") or care.get("level")
 
         if any(word in message for word in ["药", "治疗", "处方"]):
@@ -187,9 +175,13 @@ class MockChatProvider:
                 f"- {display_label_zh(str(item.get('label', '未知候选')))}：匹配分数 {float(item.get('score', 0)):.4f}"
                 for item in predictions
             ] or ["- 当前工具未返回视觉候选。"]
-            visual_level = contextual.get("visual_triage_level", level or "信息不足")
-            adjusted_level = contextual.get("contextual_triage_level", visual_level)
-            positive = contextual.get("positive_context_features", [])
+            positive = [
+                name for key, name in {
+                    "itch": "瘙痒", "hurt": "疼痛", "bleed": "出血",
+                    "grew": "近期增大", "changed": "外观变化",
+                    "skin_cancer_history": "皮肤肿瘤史", "cancer_history": "其他肿瘤史",
+                }.items() if clinical.get(key)
+            ]
             references = [
                 f"- {item.get('title', item.get('id', '未命名指南'))}（{item.get('source', '本地知识库')}）"
                 for item in guidelines
@@ -201,30 +193,20 @@ class MockChatProvider:
             technical = ""
             if mode == "clinician":
                 technical = (
-                    f"\n视觉基线策略：`{triage.get('policy_version', 'unknown')}`；"
-                    f"视觉基线原因：`{triage.get('reason_codes', [])}`。"
-                    + (
-                        f"\n红旗规则原因：`{contextual.get('reason_codes', [])}`；"
-                        f"红旗特征：`{contextual.get('red_flags', [])}`。"
-                        if contextual else ""
-                    )
+                    f"\n分级策略：`{triage.get('policy_version', 'unknown')}`；"
+                    f"分级原因：`{triage.get('reason_codes', [])}`。"
                 )
             return "\n".join(
                 [
                     "## 直接结论",
-                    f"当前本地规则分级为 **{adjusted_level}**。这是风险筛查和转诊建议，不是癌症确诊。{technical}",
+                    f"当前本地规则分级为 **{level or '信息不足'}**。这是风险筛查和转诊建议，不是癌症确诊。{technical}",
                     "",
                     "## 视觉证据",
                     *candidate_lines,
                     "这些分数只用于当前候选集合内的相对排序，不是患病概率。",
                     "",
-                    "## 症状复核与二次校准",
-                    (
-                        f"视觉初步分级为 **{visual_level}**，结合结构化症状后的本地规则分级为 "
-                        f"**{adjusted_level}**。阳性特征：{'、'.join(positive) or '未记录阳性特征'}。"
-                        if contextual
-                        else "当前病例尚未完成结构化症状二次校准，因此不能把症状作为本次归因依据。"
-                    ),
+                    "## 结构化病例信息",
+                    f"多模态分析已同时使用图像与病例信息。阳性特征：{'、'.join(positive) or '未记录阳性特征'}。",
                     "",
                     "## 本地指南依据",
                     *references,
@@ -237,16 +219,6 @@ class MockChatProvider:
                     "",
                     DISCLAIMER,
                 ]
-            )
-
-        if contextual:
-            visual_level = contextual.get("visual_triage_level", "信息不足")
-            adjusted_level = contextual.get("contextual_triage_level", visual_level)
-            return (
-                f"视觉初步分级为 {visual_level}；结合您的结构化症状回答后，"
-                f"本地规则复核为 {adjusted_level}。{contextual.get('action', '')}"
-                "云模型只参与追问顺序选择，没有修改视觉分数或决定风险等级。"
-                f"{DISCLAIMER}"
             )
 
         if mode == "clinician":

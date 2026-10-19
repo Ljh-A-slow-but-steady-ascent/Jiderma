@@ -72,16 +72,6 @@ def create_mcp_server(services: ServiceContainer | None = None) -> FastMCP:
         )
         return call.result
 
-    @server.tool(structured_output=True)
-    async def get_contextual_assessment(case_id: str) -> dict[str, Any]:
-        """Read the deterministic visual-plus-symptom assessment, if completed."""
-        call = await registry.invoke(
-            "get_contextual_assessment",
-            {"case_id": case_id},
-            ToolContext(case_id=case_id, channel="mcp", destination="mcp_client"),
-        )
-        return call.result
-
     return server
 
 

@@ -24,8 +24,10 @@ VISUAL_MODEL_DISCLOSURE_PATTERNS = (
     r"DermFM(?:[\s‑-]*Zero(?:[\s‑-]*Open)?)?",
     r"HAM7(?:[\s‑-]*(?:Linear[\s‑-]*Head|线性任务头|任务头))?",
     r"supervised_linear_probe",
+    r"supervised_multimodal_pad",
     r"dermfm_extended_[A-Za-z0-9_.-]+",
     r"ham7_supervised_[A-Za-z0-9_.-]+",
+    r"pad_clinical_multimodal_[A-Za-z0-9_.-]+",
 )
 
 
@@ -46,7 +48,7 @@ def public_visual_evidence(visual: dict[str, Any] | None) -> dict[str, Any] | No
         ],
         "image_quality": visual.get("image_quality"),
         "supports_triage": bool(visual.get("supports_triage", False)),
-        "abstained": bool(visual.get("abstained", False)),
+        "clinical_context": dict(visual.get("clinical_context") or {}),
     }
 
 
@@ -56,17 +58,13 @@ def public_triage_result(triage: dict[str, Any] | None) -> dict[str, Any] | None
     metadata = triage.get("confidence_metadata") or {}
     return {
         "level": triage.get("level"),
-        "reason_codes": [
-            "VISUAL_CONFIDENCE_INSUFFICIENT" if code == "TASK_HEAD_ABSTAINED" else code
-            for code in triage.get("reason_codes", [])
-        ],
+        "reason_codes": list(triage.get("reason_codes", [])),
         "policy_version": triage.get("policy_version"),
         "confidence_metadata": {
             "image_quality": metadata.get("image_quality"),
             "top1_label": display_label_zh(str(metadata.get("top1_label", "未知候选"))),
             "top1_score": metadata.get("top1_score"),
             "scores_are_calibrated_probabilities": metadata.get("scores_are_calibrated_probabilities", False),
-            "abstained": bool(metadata.get("abstained", False)),
         },
     }
 
@@ -119,9 +117,20 @@ class DermaGuardChatAgent:
         self.provider = provider or create_chat_provider()
 
     def _public_case_context(self, case_id: str, mode: str) -> dict[str, Any]:
+        patient = self.repository.get_case_patient(case_id)
+        narrative = ""
+        if patient:
+            narrative = sanitize_text(str(patient.get("chief_complaint") or ""))[0]
+            for field in ("name", "outpatient_no", "phone"):
+                identity = str(patient.get(field) or "").strip()
+                if identity:
+                    narrative = narrative.replace(identity, "[REDACTED_IDENTITY]")
         return {
             "case_exists": self.repository.get_case(case_id) is not None,
-            "has_contextual_assessment": self.repository.get_contextual_assessment(case_id) is not None,
+            "has_structured_clinical_profile": bool(
+                patient and patient.get("clinical_profile")
+            ),
+            "clinical_narrative": narrative[:1200],
             "mode": mode,
         }
 
@@ -182,8 +191,6 @@ class DermaGuardChatAgent:
             names = []
         else:
             names = ["get_visual_evidence", "get_triage_result", "get_care_pathway"]
-            if self.repository.get_contextual_assessment(request.case_id) is not None:
-                names.append("get_contextual_assessment")
         results: dict[str, dict[str, Any]] = {}
         for name in names:
             value = await self._invoke_tool(name, {}, request=request, destination=destination, traces=traces)
@@ -192,14 +199,24 @@ class DermaGuardChatAgent:
         return results
 
     @staticmethod
-    def _default_query(message: str, results: dict[str, dict[str, Any]]) -> str:
+    def _default_query(
+        message: str,
+        results: dict[str, dict[str, Any]],
+        clinical_narrative: str = "",
+    ) -> str:
         visual = results.get("get_visual_evidence", {})
         triage = results.get("get_triage_result", {})
-        contextual = results.get("get_contextual_assessment", {})
         labels = [str(item.get("label", "")) for item in visual.get("top_predictions", [])[:3] if item.get("label")]
         reasons = [str(item) for item in triage.get("reason_codes", [])]
-        red_flags = [str(item) for item in contextual.get("red_flags", [])]
-        parts = [message, *labels, str(triage.get("level", "")), *reasons, *red_flags, "危险征象 鉴别依据 检查指征 转诊指南"]
+        clinical = visual.get("clinical_context") or {}
+        positive = [
+            name for key, name in {
+                "itch": "瘙痒", "hurt": "疼痛", "bleed": "出血",
+                "grew": "近期增大", "changed": "外观变化",
+                "skin_cancer_history": "皮肤肿瘤史", "cancer_history": "其他肿瘤史",
+            }.items() if clinical.get(key)
+        ]
+        parts = [message, clinical_narrative, *labels, *positive, str(clinical.get("region", "")), str(triage.get("level", "")), *reasons, "支持证据 冲突证据 鉴别依据 检查指征 转诊指南"]
         return " ".join(item for item in parts if item)[:500]
 
     def _safe_query(self, query: str, case_id: str) -> str | None:
@@ -259,9 +276,8 @@ class DermaGuardChatAgent:
 
     @staticmethod
     def _risk_conflicts(response: str, results: dict[str, dict[str, Any]]) -> bool:
-        contextual = results.get("get_contextual_assessment", {})
         triage = results.get("get_triage_result", {})
-        level = str(contextual.get("contextual_triage_level") or triage.get("level") or "")
+        level = str(triage.get("level") or "")
         forbidden = {
             "PRIORITY_REFERRAL": ["routine", "low risk", "local_review", "低风险", "无需就医", "无需转诊"],
             "REFERRAL": ["routine", "low risk", "local_review", "低风险", "无需就医", "无需转诊"],
@@ -287,7 +303,6 @@ class DermaGuardChatAgent:
         results = await self._load_case_evidence(request, provider.name, sanitized_message, traces)
         retrieval_observations: list[dict[str, Any]] = []
         seen_queries: set[str] = set()
-        clarification: str | None = None
         fallback_triggered = False
 
         planning_gate = self.egress_guard.check(EgressRequest(
@@ -312,7 +327,10 @@ class DermaGuardChatAgent:
                     fallback_triggered = True
                     decision = RetrievalDecision(
                         intent="deterministic_retrieval_fallback",
-                        retrieval_query=self._default_query(sanitized_message, results),
+                        retrieval_query=self._default_query(
+                            sanitized_message, results,
+                            str(public_context.get("clinical_narrative", "")),
+                        ),
                         reasoning_summary="LLM 检索决策不可用，执行一次可审计的本地 fallback。",
                     )
 
@@ -329,17 +347,18 @@ class DermaGuardChatAgent:
                     )
 
                 if decision.should_ask_user:
-                    clarification = decision.clarification_question or (
-                        "为了补充当前证据，请说明：" + "、".join(decision.missing_information)
+                    # The clinician already submitted the canonical structured
+                    # profile before inference.  The LLM may refine retrieval,
+                    # but must not start a second symptom-question workflow.
+                    decision = RetrievalDecision(
+                        intent=decision.intent,
+                        retrieval_query=self._default_query(
+                            sanitized_message, results,
+                            str(public_context.get("clinical_narrative", "")),
+                        ),
+                        evidence_sufficient=False,
+                        reasoning_summary="结构化病例已采集，改为检索证据而非追问患者。",
                     )
-                    trace = AgentTraceStep(
-                        step=step, intent=decision.intent, evidence_sufficient=False,
-                        missing_information=decision.missing_information, decision="ASK_USER_FOR_EVIDENCE",
-                        reasoning_summary=decision.reasoning_summary, provider_used=provider.name,
-                    )
-                    agent_trace.append(trace)
-                    self._save_trace(request.case_id, trace)
-                    break
 
                 if decision.evidence_sufficient:
                     trace = AgentTraceStep(
@@ -352,7 +371,10 @@ class DermaGuardChatAgent:
                     break
 
                 query = self._safe_query(
-                    decision.retrieval_query or self._default_query(sanitized_message, results), request.case_id
+                    decision.retrieval_query or self._default_query(
+                        sanitized_message, results,
+                        str(public_context.get("clinical_narrative", "")),
+                    ), request.case_id
                 )
                 if not query or query in seen_queries:
                     trace = AgentTraceStep(
@@ -389,21 +411,6 @@ class DermaGuardChatAgent:
                 if fallback_triggered:
                     break
 
-        if clarification is not None:
-            response_text = (
-                f"{clarification}\n\n我不会根据自由文本直接改变风险等级；"
-                "提交结构化症状后，系统会交由本地红旗规则复核。"
-                "\n\n本系统仅用于辅助筛查和分级转诊，不构成医学诊断。"
-            )
-            self.repository.add_chat_message(request.case_id, "user", sanitized_message, [item.model_dump(mode="json") for item in traces])
-            self.repository.add_chat_message(request.case_id, "assistant", response_text, [])
-            return ChatResponse(
-                case_id=request.case_id, response=response_text, tool_calls=traces,
-                privacy_status="SAFE", provider=provider_used, model=model_used,
-                latency_ms=(time.perf_counter() - started) * 1000, mode=request.mode,
-                detail_level=request.detail_level, agent_trace=agent_trace,
-            )
-
         outbound_payload = {
             "message": sanitized_message,
             "mode": request.mode,
@@ -412,7 +419,6 @@ class DermaGuardChatAgent:
             "care_pathway": public_care_pathway(results.get("get_care_pathway")),
             "guideline_context": public_guideline_context(results.get("search_guideline")),
             "privacy_report": results.get("get_privacy_report"),
-            "contextual_assessment": results.get("get_contextual_assessment"),
         }
         outbound = self.egress_guard.check(EgressRequest(
             channel="llm", destination=provider.name,
@@ -429,7 +435,6 @@ class DermaGuardChatAgent:
                     "get_care_pathway": "care_pathway",
                     "search_guideline": "guideline_context",
                     "get_privacy_report": "privacy_report",
-                    "get_contextual_assessment": "contextual_assessment",
                 }.items()
                 if payload_name in safe_payload
             }

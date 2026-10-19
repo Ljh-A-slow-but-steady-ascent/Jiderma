@@ -13,30 +13,9 @@ class TriagePolicyService:
             "melanoma",
             "basal cell carcinoma",
             "squamous cell carcinoma",
-            "lentigo maligna melanoma",
-            "merkel cell carcinoma",
-            "cutaneous t cell lymphoma",
-            "cutaneous b-cell lymphoma",
-            "kaposi's sarcoma of skin",
-            "metastatic carcinoma",
-            "stevens-johnson syndrome",
-            "toxic epidermal necrolysis",
-            "acute generalized exanthematous pustulosis",
-            "staphylococcal scalded skin syndrome",
-            "eczema herpeticum",
         }
     )
-    REFERRAL_TOP1 = frozenset(
-        {
-            "actinic keratosis",
-            "bowen's disease",
-            "pemphigus vulgaris",
-            "bullous pemphigoid",
-            "pyoderma gangrenosum",
-            "leukocytoclastic vasculitis",
-            "urticarial vasculitis",
-        }
-    )
+    REFERRAL_TOP1 = frozenset({"actinic keratosis"})
 
     def __init__(self, min_quality: float = 0.4, repository: CaseRepository | None = None) -> None:
         self.min_quality = min_quality
@@ -51,14 +30,10 @@ class TriagePolicyService:
             "top1_score": evidence.top_predictions[0].score if evidence.top_predictions else None,
             "scores_are_calibrated_probabilities": False,
             "prediction_mode": evidence.prediction_mode,
-            "abstained": evidence.abstained,
         }
         if evidence.image_quality < self.min_quality:
             level = CarePathwayLevel.RETAKE
             reasons = ["IMAGE_QUALITY_BELOW_THRESHOLD"]
-        elif evidence.abstained:
-            level = CarePathwayLevel.LOCAL_REVIEW
-            reasons = ["TASK_HEAD_ABSTAINED", "CLINICAL_REVIEW_REQUIRED"]
         elif not evidence.supports_triage or not labels:
             level = CarePathwayLevel.RETAKE
             reasons = ["VISUAL_EVIDENCE_UNAVAILABLE"]
@@ -70,7 +45,7 @@ class TriagePolicyService:
             reasons = ["SPECIALIST_DIFFERENTIATION_RECOMMENDED", "CANDIDATE_ACTINIC_KERATOSIS"]
         elif any(
             item.label.strip().lower() in self.PRIORITY_TOP1
-            and (evidence.prediction_mode == "zero_shot" or item.score >= 0.25)
+            and item.score >= 0.25
             for item in evidence.top_predictions[:3]
         ):
             level = CarePathwayLevel.REFERRAL

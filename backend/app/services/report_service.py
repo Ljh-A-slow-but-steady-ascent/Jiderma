@@ -32,12 +32,11 @@ def _fallback(payload: dict[str, Any]) -> dict[str, str]:
     candidates = "、".join(display_label_zh(str(item.get("label", "未知候选"))) for item in top[:3]) or "暂无稳定候选"
     triage = payload.get("triage", {})
     care = payload.get("care_pathway", {})
-    contextual = payload.get("contextual") or {}
     return {
         "clinical_summary": str(payload.get("chief_complaint") or "已完成图像与症状信息采集。"),
         "visual_summary": f"图像辅助分析候选包括：{candidates}。候选用于辅助鉴别，不代表确诊。",
-        "risk_interpretation": f"当前辅助风险分级为 {contextual.get('contextual_triage_level') or triage.get('level', '待医生复核')}。",
-        "evidence_summary": "系统已结合本地医学知识和结构化风险规则整理当前证据。",
+        "risk_interpretation": f"当前辅助风险分级为 {triage.get('level', '待医生复核')}。",
+        "evidence_summary": "系统已结合多模态候选、结构化病例与本地医学知识整理当前证据。",
         "recommendations": str(care.get("action") or "请结合面诊、皮肤镜检查及必要的进一步检查进行判断。"),
         "follow_up": "如病灶持续变化、出血、破溃或症状加重，请及时复评并完善记录。",
     }
@@ -82,7 +81,7 @@ def render_report(patient: dict[str, Any], case_id: str, structured: dict[str, A
         f"- 病灶部位：{patient['lesion_site']}", f"- 病例编号：{case_id}", "",
         "## 主诉与病史摘要", structured["clinical_summary"], "",
         "## 图像辅助分析", structured["visual_summary"], "",
-        "## 风险与症状核验", structured["risk_interpretation"], "",
+        "## 风险与病例信息", structured["risk_interpretation"], "",
         "## 医学证据摘要", structured["evidence_summary"], "",
         "## 建议", structured["recommendations"], "",
         "## 随访提示", structured["follow_up"], "",

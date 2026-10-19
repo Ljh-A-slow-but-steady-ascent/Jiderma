@@ -50,6 +50,7 @@ class CasePatientRecord(Base):
     patient_id: Mapped[str] = mapped_column(String(64), index=True)
     lesion_site: Mapped[str] = mapped_column(String(120))
     chief_complaint: Mapped[str] = mapped_column(Text)
+    clinical_profile_json: Mapped[str] = mapped_column(Text, default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
@@ -110,17 +111,6 @@ class CarePathwayRecord(Base):
     case_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     result_json: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-
-
-class ContextualRecord(Base):
-    __tablename__ = "contextual_assessments"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    case_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    intake_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    plan_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class ChatMessageRecord(Base):

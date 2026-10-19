@@ -17,7 +17,6 @@ from backend.app.database.models import (
     CaseRecord,
     CasePatientRecord,
     ChatMessageRecord,
-    ContextualRecord,
     PatientRecord,
     ReportRecord,
     ReportRevisionRecord,
@@ -167,13 +166,21 @@ class CaseRepository:
             "updated_at": item.updated_at.isoformat(),
         }
 
-    def link_case_patient(self, case_id: str, patient_id: str, lesion_site: str, chief_complaint: str) -> None:
+    def link_case_patient(
+        self,
+        case_id: str,
+        patient_id: str,
+        lesion_site: str,
+        chief_complaint: str,
+        clinical_profile: dict[str, Any],
+    ) -> None:
         with self.sessions.begin() as db:
             db.add(CasePatientRecord(
                 case_id=case_id,
                 patient_id=patient_id,
                 lesion_site=lesion_site,
                 chief_complaint=chief_complaint,
+                clinical_profile_json=self._json(clinical_profile),
             ))
 
     def get_case_patient(self, case_id: str) -> dict[str, Any] | None:
@@ -185,7 +192,12 @@ class CaseRepository:
             if patient is None:
                 return None
             result = self.patient_public(patient)
-            result.update({"case_id": case_id, "lesion_site": link.lesion_site, "chief_complaint": link.chief_complaint})
+            result.update({
+                "case_id": case_id,
+                "lesion_site": link.lesion_site,
+                "chief_complaint": link.chief_complaint,
+                "clinical_profile": json.loads(link.clinical_profile_json or "{}"),
+            })
             return result
 
     def create_report(
@@ -306,38 +318,6 @@ class CaseRepository:
 
     def get_care_pathway(self, case_id: str) -> dict[str, Any] | None:
         return self._get_result(CarePathwayRecord, case_id)
-
-    def _save_context_field(self, case_id: str, field: str, value: BaseModel) -> None:
-        with self.sessions.begin() as db:
-            record = db.scalar(select(ContextualRecord).where(ContextualRecord.case_id == case_id))
-            if record is None:
-                record = ContextualRecord(case_id=case_id)
-                db.add(record)
-            setattr(record, field, value.model_dump_json())
-
-    def _get_context_field(self, case_id: str, field: str) -> dict[str, Any] | None:
-        with self.sessions() as db:
-            record = db.scalar(select(ContextualRecord).where(ContextualRecord.case_id == case_id))
-            raw = None if record is None else getattr(record, field)
-            return None if raw is None else json.loads(raw)
-
-    def save_context_intake(self, case_id: str, value: BaseModel) -> None:
-        self._save_context_field(case_id, "intake_json", value)
-
-    def get_context_intake(self, case_id: str) -> dict[str, Any] | None:
-        return self._get_context_field(case_id, "intake_json")
-
-    def save_verification_plan(self, case_id: str, value: BaseModel) -> None:
-        self._save_context_field(case_id, "plan_json", value)
-
-    def get_verification_plan(self, case_id: str) -> dict[str, Any] | None:
-        return self._get_context_field(case_id, "plan_json")
-
-    def save_contextual_assessment(self, case_id: str, value: BaseModel) -> None:
-        self._save_context_field(case_id, "result_json", value)
-
-    def get_contextual_assessment(self, case_id: str) -> dict[str, Any] | None:
-        return self._get_context_field(case_id, "result_json")
 
     def add_chat_message(self, case_id: str, role: str, message: str, tool_calls: list[dict]) -> None:
         with self.sessions.begin() as db:

@@ -21,13 +21,11 @@ LEVEL_LABELS = {
     "PRIORITY_REFERRAL": "建议优先转诊",
 }
 LEVEL_ORDER = {"RETAKE": 0, "LOCAL_REVIEW": 1, "REFERRAL": 2, "PRIORITY_REFERRAL": 3}
-DURATION_VALUES = {
-    "24小时内": "within_24h",
-    "1—3天": "1_3_days",
-    "4—7天": "4_7_days",
-    "1—4周": "1_4_weeks",
-    "超过1个月": "over_month",
-    "不清楚": "unknown",
+REGION_VALUES = {
+    "腹部": "ABDOMEN", "上臂": "ARM", "背部": "BACK", "胸部": "CHEST",
+    "耳部": "EAR", "面部": "FACE", "足部": "FOOT", "前臂": "FOREARM",
+    "手部": "HAND", "唇部": "LIP", "颈部": "NECK", "鼻部": "NOSE",
+    "头皮": "SCALP", "大腿": "THIGH",
 }
 DISEASE_LABELS = DISPLAY_LABELS_ZH
 st.set_page_config(page_title="霁肤 · Jiderma 医生工作台", page_icon="霁", layout="wide")
@@ -61,10 +59,13 @@ for key, default in {
     "analysis": None,
     "mode": "clinician",
     "image_bytes": None,
-    "verification_plan": None,
-    "contextual_assessment": None,
     "patient": None,
     "active_report": None,
+    "clinical_draft": None,
+    "clinical_draft_source": "",
+    "confirmed_metadata": None,
+    "confirmed_metadata_source": "",
+    "clinical_extraction_info": None,
 }.items():
     if key not in st.session_state:
         st.session_state[key] = default
@@ -124,24 +125,154 @@ with st.container(border=True):
     with p1:
         patient_name = st.text_input("患者姓名 *")
     with p2:
-        patient_sex = st.selectbox("性别 *", ["男", "女", "其他"])
+        patient_sex = st.selectbox("性别 *", ["男", "女"])
     with p3:
         patient_age = st.number_input("年龄 *", min_value=0, max_value=130, value=30)
     with p4:
         outpatient_no = st.text_input("患者编号 / 门诊号 *")
-    p5, p6 = st.columns(2)
-    with p5:
-        patient_phone = st.text_input("联系方式（选填）")
-        lesion_site = st.text_input("病灶部位 *", placeholder="例如：左前臂、面部")
-        medical_history = st.text_area("既往史（选填）", height=76)
-    with p6:
-        chief_complaint = st.text_area("主诉与病程 *", height=76, placeholder="例如：发现色素性病灶约2年，近2个月增大并偶有出血")
-        allergy_history = st.text_area("过敏史（选填）", height=76)
+    patient_phone = st.text_input("联系方式（选填）")
+
+st.markdown('<div class="dg-section-label">病例自然语言描述</div>', unsafe_allow_html=True)
+st.caption("请用自然语言记录部位、尺寸、症状、变化及肿瘤病史。患者身份信息会在调用语言模型前脱敏。")
+with st.container(border=True):
+    clinical_narrative = st.text_area(
+        "医生病例描述 *", height=170,
+        placeholder=(
+            "例如：面部色素性病灶，约9×9毫米，近期明显增大且颜色发生变化，"
+            "无疼痛、瘙痒和出血，无皮肤肿瘤及其他肿瘤病史。"
+        ),
+    )
+    try:
+        extraction_catalog = [
+            item for item in api("GET", "/v1/chat/models") if item.get("available")
+        ]
+    except Exception:
+        extraction_catalog = []
+    extraction_options = ["auto", *[item["id"] for item in extraction_catalog]]
+    extraction_labels = {"auto": "系统默认语言模型"}
+    extraction_labels.update({item["id"]: item["label"] for item in extraction_catalog})
+    extraction_model = st.selectbox(
+        "病例信息抽取模型", extraction_options,
+        format_func=lambda value: extraction_labels.get(value, value),
+    )
+
+source_fingerprint = json.dumps(
+    {
+        "narrative": clinical_narrative.strip(),
+        "age": int(patient_age),
+        "gender": "MALE" if patient_sex == "男" else "FEMALE",
+    },
+    ensure_ascii=False,
+    sort_keys=True,
+)
+if st.button("解析病例信息", type="secondary", width="stretch"):
+    if len(clinical_narrative.strip()) < 10:
+        st.warning("请先输入完整的病例描述。")
+    else:
+        try:
+            with st.spinner("正在脱敏并抽取结构化病例信息……"):
+                extracted = api("POST", "/v1/clinical-metadata/extract", json={
+                    "narrative": clinical_narrative.strip(),
+                    "age": int(patient_age),
+                    "gender": "MALE" if patient_sex == "男" else "FEMALE",
+                    "patient_name": patient_name.strip(),
+                    "outpatient_no": outpatient_no.strip(),
+                    "phone": patient_phone.strip(),
+                    "model": extraction_model,
+                })
+            st.session_state.clinical_draft = extracted
+            st.session_state.clinical_draft_source = source_fingerprint
+            st.session_state.confirmed_metadata = None
+            st.session_state.confirmed_metadata_source = ""
+            draft = extracted["metadata"]
+            reverse_regions = {value: label for label, value in REGION_VALUES.items()}
+            st.session_state.confirm_region = reverse_regions.get(draft.get("region"), "未识别")
+            st.session_state.confirm_diameter_1 = float(draft.get("diameter_1") or 0.0)
+            st.session_state.confirm_diameter_2 = float(draft.get("diameter_2") or 0.0)
+            for field in ("itch", "hurt", "bleed", "grew", "changed", "skin_cancer_history", "cancer_history"):
+                value = draft.get(field)
+                st.session_state[f"confirm_{field}"] = "是" if value is True else "否" if value is False else "未识别"
+            st.rerun()
+        except Exception as exc:
+            st.error(str(exc))
+
+draft_is_current = (
+    st.session_state.clinical_draft is not None
+    and st.session_state.clinical_draft_source == source_fingerprint
+)
+if st.session_state.clinical_draft is not None and not draft_is_current:
+    st.info("病例描述或患者基本信息已变更，请重新解析。")
+
+if draft_is_current:
+    extracted = st.session_state.clinical_draft
+    if extracted.get("missing_field_labels"):
+        st.warning("以下信息未明确提供，请在确认卡中补充：" + "、".join(extracted["missing_field_labels"]))
+    st.markdown("#### 结构化信息确认")
+    st.caption("请医生核对后再进入多模态分析；未提取到的信息不会被自动补造。")
+    with st.form("clinical-metadata-confirmation"):
+        m1, m2, m3 = st.columns(3)
+        with m1:
+            confirmed_region_label = st.selectbox("解剖部位", ["未识别", *REGION_VALUES], key="confirm_region")
+        with m2:
+            confirmed_diameter_1 = st.number_input(
+                "病灶长径（毫米）", min_value=0.0, max_value=200.0,
+                step=0.5, key="confirm_diameter_1",
+            )
+        with m3:
+            confirmed_diameter_2 = st.number_input(
+                "病灶短径（毫米）", min_value=0.0, max_value=200.0,
+                step=0.5, key="confirm_diameter_2",
+            )
+        boolean_labels = {
+            "itch": "瘙痒", "hurt": "疼痛", "bleed": "出血",
+            "grew": "近期增大", "changed": "外观变化",
+            "skin_cancer_history": "皮肤肿瘤史", "cancer_history": "其他肿瘤史",
+        }
+        boolean_values: dict[str, str] = {}
+        columns = st.columns(4)
+        for index, (field, label) in enumerate(boolean_labels.items()):
+            with columns[index % 4]:
+                boolean_values[field] = st.selectbox(
+                    label, ["未识别", "否", "是"], key=f"confirm_{field}"
+                )
+        confirmed = st.form_submit_button("确认病例信息", type="primary", width="stretch")
+    if confirmed:
+        unresolved = [label for field, label in boolean_labels.items() if boolean_values[field] == "未识别"]
+        if confirmed_region_label == "未识别":
+            unresolved.append("解剖部位")
+        if confirmed_diameter_1 <= 0:
+            unresolved.append("病灶长径")
+        if confirmed_diameter_2 <= 0:
+            unresolved.append("病灶短径")
+        if unresolved:
+            st.error("请先补充：" + "、".join(unresolved))
+        else:
+            st.session_state.confirmed_metadata = {
+                "age": int(patient_age),
+                "gender": "MALE" if patient_sex == "男" else "FEMALE",
+                "region": REGION_VALUES[confirmed_region_label],
+                **{field: value == "是" for field, value in boolean_values.items()},
+                "diameter_1": float(confirmed_diameter_1),
+                "diameter_2": float(confirmed_diameter_2),
+            }
+            st.session_state.confirmed_metadata_source = source_fingerprint
+            st.session_state.clinical_extraction_info = {
+                "provider": extracted.get("provider"), "model": extracted.get("model"),
+                "privacy_status": extracted.get("privacy_status"),
+            }
+            st.success("结构化病例信息已由医生确认。")
+
+metadata_is_confirmed = (
+    st.session_state.confirmed_metadata is not None
+    and st.session_state.confirmed_metadata_source == source_fingerprint
+)
+if metadata_is_confirmed:
+    st.success("病例文本已解析、核对，可与病灶图像共同分析。")
 
 st.markdown('<div class="dg-section-label">病灶图像</div>', unsafe_allow_html=True)
 
 st.markdown(
-    '<div class="dg-upload-note"><i></i><span>支持 JPG、PNG 与 WEBP；建议使用光线均匀、对焦清晰的皮肤镜图像</span></div>',
+    '<div class="dg-upload-note"><i></i><span>支持 JPG、PNG 与 WEBP；建议使用光线均匀、对焦清晰的临床皮肤图像</span></div>',
     unsafe_allow_html=True,
 )
 uploaded = st.file_uploader(
@@ -152,15 +283,18 @@ uploaded = st.file_uploader(
 if uploaded is not None:
     st.session_state.image_bytes = uploaded.getvalue()
     if st.button("开始本地 AI 分析", type="primary", width="stretch"):
-        if not all([patient_name.strip(), outpatient_no.strip(), lesion_site.strip(), chief_complaint.strip()]):
-            st.warning("请先完整填写患者姓名、患者编号、病灶部位和主诉。")
+        if not all([patient_name.strip(), outpatient_no.strip(), clinical_narrative.strip()]):
+            st.warning("请先完整填写患者姓名、患者编号和病例描述。")
+            st.stop()
+        if not metadata_is_confirmed:
+            st.warning("请先解析并确认结构化病例信息。")
             st.stop()
         progress = st.status("正在院内本地完成 AI 分析", expanded=True)
         try:
             patient = api("POST", "/v1/patients", json={
                 "name": patient_name.strip(), "sex": patient_sex, "age": int(patient_age),
                 "outpatient_no": outpatient_no.strip(), "phone": patient_phone.strip(),
-                "medical_history": medical_history.strip(), "allergy_history": allergy_history.strip(),
+                "medical_history": "", "allergy_history": "",
             })
             st.session_state.patient = patient
             progress.write("✓ 原始医疗影像保持在本地可信域")
@@ -170,19 +304,23 @@ if uploaded is not None:
                 files={"image": (uploaded.name, uploaded.getvalue(), uploaded.type)},
                 data={
                     "mode": "clinician", "retention_mode": "local",
-                    "patient_id": patient["patient_id"], "lesion_site": lesion_site.strip(),
-                    "chief_complaint": chief_complaint.strip(),
+                    "patient_id": patient["patient_id"],
+                    "lesion_site": {value: label for label, value in REGION_VALUES.items()}[
+                        st.session_state.confirmed_metadata["region"]
+                    ],
+                    "chief_complaint": clinical_narrative.strip(),
+                    "clinical_metadata_json": json.dumps(
+                        st.session_state.confirmed_metadata, ensure_ascii=False
+                    ),
                 },
             )
             st.session_state.case_id = created["case_id"]
-            st.session_state.verification_plan = None
-            st.session_state.contextual_assessment = None
             st.session_state.active_report = None
-            progress.write("✓ 图片质量检查与图像特征分析")
+            progress.write("✓ 图片质量检查与图像—病例联合分析")
             st.session_state.analysis = api(
                 "POST", f"/v1/cases/{st.session_state.case_id}/analyze"
             )
-            progress.write("✓ 确定性分级策略与后续医疗路径已生成")
+            progress.write("✓ Top-3 候选与本地医学证据已生成")
             progress.update(label="本地分析完成", state="complete", expanded=False)
         except Exception as exc:
             progress.update(label="分析失败", state="error")
@@ -212,10 +350,8 @@ with left:
         )
         inject(V.render_risk_gauge(level, float(analysis["visual"].get("image_quality", 0))), height=142)
         inject(V.render_triage_tree(level), height=142)
-        st.markdown("#### 视觉候选参考")
+        st.markdown("#### 多模态候选参考")
         st.caption("不能替代医生检查或病理诊断。")
-        if analysis["visual"].get("abstained"):
-            st.warning("本次结果低于模型可信阈值，请由专业人员复核，不应依据首位候选自行判断。")
         inject(V.render_candidate_radar(analysis["visual"]["top_predictions"], DISEASE_LABELS), height=278)
         st.markdown("#### 建议的下一步")
         for index, item in enumerate(analysis["care_pathway"]["recommended_next_steps"], 1):
@@ -224,7 +360,8 @@ with left:
         with st.expander("查看本次证据链", expanded=False):
             inject(V.render_evidence_graph(analysis, DISEASE_LABELS), height=178)
 
-        st.markdown("#### 指南依据")
+        st.markdown("#### Top-3 候选的循证参考")
+        st.caption("证据用于帮助医生核对支持点、冲突点、检查与转诊依据，不会重新排序模型候选。")
         for item in analysis["guidelines"]:
             evidence_label = item.get("evidence_type", "医学依据")
             with st.expander(f"{evidence_label} · {item['title']}"):
@@ -275,7 +412,6 @@ with left:
                             "search_guideline",
                             "get_care_pathway",
                             "get_privacy_report",
-                            "get_contextual_assessment",
                         ],
                         "decision_plane_mutable_by_agent": False,
                     }),
@@ -315,121 +451,6 @@ with right:
                     )
                 except Exception as exc:
                     st.error(str(exc))
-
-if analysis is not None:
-    st.divider()
-    st.markdown('<div class="dg-section-label">症状核验</div>', unsafe_allow_html=True)
-    st.subheader("结合症状进行二次风险校准")
-    if st.session_state.verification_plan is None:
-        with st.form("context_intake"):
-            col_a, col_b, col_c = st.columns(3)
-            with col_a:
-                duration_label = st.selectbox("病灶出现多久？", list(DURATION_VALUES))
-                pain = st.checkbox("有疼痛")
-                pruritus = st.checkbox("有瘙痒")
-            with col_b:
-                fever = st.checkbox("伴发热")
-                rapid_spread = st.checkbox("近期范围快速扩大")
-                severe_bleeding = st.checkbox("出血较多且难以止住")
-            with col_c:
-                breathing = st.checkbox("呼吸困难")
-                consciousness = st.checkbox("意识异常")
-                severe_allergy = st.checkbox("疑似严重过敏反应")
-            planner_model = st.selectbox(
-                "追问排序模型",
-                ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b", "glm-5.3-flash", "glm-4-flash", "auto"],
-                format_func=lambda value: {
-                    "openai/gpt-oss-120b": "Groq·GPT-OSS 120B",
-                    "openai/gpt-oss-20b": "Groq·GPT-OSS 20B",
-                    "qwen/qwen3.8-27b": "Groq·Qwen3.8 27B（预览）",
-                    "glm-5.3-flash": "智谱 GLM-5.3-Flash",
-                    "glm-4-flash": "智谱 GLM-4-Flash",
-                    "auto": "后端默认模型",
-                }[value],
-            )
-            submitted = st.form_submit_button("生成针对性追问", type="primary", width="stretch")
-        if submitted:
-            try:
-                with st.spinner("正在结合视觉候选、症状信息与本地指南生成追问……"):
-                    st.session_state.verification_plan = api(
-                        "POST",
-                        f"/v1/cases/{st.session_state.case_id}/contextual-intake",
-                        json={
-                            "duration": DURATION_VALUES[duration_label],
-                            "pain": pain,
-                            "pruritus": pruritus,
-                            "fever": fever,
-                            "rapid_spread": rapid_spread,
-                            "breathing_difficulty": breathing,
-                            "altered_consciousness": consciousness,
-                            "severe_bleeding": severe_bleeding,
-                            "severe_allergic_reaction": severe_allergy,
-                            "model": planner_model,
-                        },
-                    )
-                st.rerun()
-            except Exception as exc:
-                st.error(str(exc))
-
-    plan = st.session_state.verification_plan
-    if plan is not None and st.session_state.contextual_assessment is None:
-        st.info(f"追问生成方式：{plan['planner_source']}｜原始图像未发送到云端")
-        with st.form("verification_answers"):
-            answers = []
-            for question in plan["questions"]:
-                choice = st.radio(
-                    question["question"],
-                    ["是", "否"],
-                    index=None,
-                    key=f"answer_{question['id']}",
-                    horizontal=True,
-                    help=question["patient_hint"],
-                )
-                answers.append((question["id"], choice))
-            verified = st.form_submit_button("完成核验并进行二次校准", type="primary", width="stretch")
-        if verified:
-            if any(choice is None for _, choice in answers):
-                st.warning("请回答全部追问后再提交。")
-            else:
-                try:
-                    st.session_state.contextual_assessment = api(
-                        "POST",
-                        f"/v1/cases/{st.session_state.case_id}/contextual-calibration",
-                        json={
-                            "answers": [
-                                {"question_id": item, "answer": choice == "是"}
-                                for item, choice in answers
-                            ]
-                        },
-                    )
-                    st.rerun()
-                except Exception as exc:
-                    st.error(str(exc))
-
-    contextual = st.session_state.contextual_assessment
-    if contextual is not None:
-        visual_level = contextual["visual_triage_level"]
-        adjusted_level = contextual["contextual_triage_level"]
-        st.markdown(
-            V.render_calibration_compare(visual_level, adjusted_level, contextual["risk_changed"]),
-            unsafe_allow_html=True,
-        )
-        symptom_features = {
-            "病程": 0.6, "疼痛": 0.3, "瘙痒": 0.4, "发热": 0.2,
-            "快速扩散": 0.1, "边缘变化": 0.5, "出血": 0.0,
-            "呼吸困难": 0.0, "意识异常": 0.0, "严重过敏": 0.0,
-        }
-        for feat in contextual.get("positive_context_features", []) or []:
-            for key in symptom_features:
-                if key in feat:
-                    symptom_features[key] = 0.85
-        inject(V.render_symptom_heatmap(symptom_features), height=320)
-        st.success(contextual["action"])
-        st.caption("视觉候选分数未被修改；云模型未决定风险等级。")
-        with st.expander("二次校准依据"):
-            st.write("本地规则原因：", contextual["reason_codes"])
-            st.write("阳性上下文特征：", contextual["positive_context_features"] or ["无"])
-            st.write("本地 RAG 引用：", [item["title"] for item in contextual["rag_references"]])
 
 if analysis is not None:
     st.divider()

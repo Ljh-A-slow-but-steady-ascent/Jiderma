@@ -22,6 +22,26 @@ class CandidatePrediction(StrictModel):
     score: float = Field(ge=0, le=1)
 
 
+class ClinicalMetadata(StrictModel):
+    """De-identified PAD-compatible facts shared by inference and retrieval."""
+
+    age: int = Field(ge=0, le=130)
+    gender: Literal["MALE", "FEMALE"]
+    region: Literal[
+        "ABDOMEN", "ARM", "BACK", "CHEST", "EAR", "FACE", "FOOT",
+        "FOREARM", "HAND", "LIP", "NECK", "NOSE", "SCALP", "THIGH",
+    ]
+    itch: bool
+    hurt: bool
+    bleed: bool
+    grew: bool
+    changed: bool
+    diameter_1: float = Field(gt=0, le=200)
+    diameter_2: float = Field(gt=0, le=200)
+    skin_cancer_history: bool
+    cancer_history: bool
+
+
 class VisualEvidence(StrictModel):
     case_id: str
     model: str
@@ -32,11 +52,9 @@ class VisualEvidence(StrictModel):
     latency_ms: float = Field(ge=0)
     local_only: bool = True
     warnings: list[str] = Field(default_factory=list)
-    prediction_mode: str = "zero_shot"
-    input_modality: str = "unspecified"
-    confidence_threshold: float | None = Field(default=None, ge=0, le=1)
-    abstained: bool = False
-    zero_shot_predictions: list[CandidatePrediction] = Field(default_factory=list)
+    prediction_mode: Literal["supervised_multimodal_pad"] = "supervised_multimodal_pad"
+    input_modality: Literal["clinical_image+structured_text"] = "clinical_image+structured_text"
+    clinical_context: ClinicalMetadata | None = None
 
 
 class TriageDecision(StrictModel):

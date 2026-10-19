@@ -303,7 +303,7 @@
   }
   function addNotice(text) { const node=doc.createElement("div"); node.className="dg-notice"; node.textContent=text; list.appendChild(node); }
   function renderTrace(row,payload) {
-    const labels={get_visual_evidence:"读取视觉证据",get_triage_result:"读取本地分级",search_guideline:"检索本地指南",get_care_pathway:"读取照护路径",get_privacy_report:"读取隐私报告",get_contextual_assessment:"读取症状校准"};
+    const labels={get_visual_evidence:"读取多模态证据",get_triage_result:"读取本地分级",search_guideline:"检索本地指南",get_care_pathway:"读取照护路径",get_privacy_report:"读取隐私报告"};
     const details=doc.createElement("details"); details.className="dg-trace";
     const calls=Array.isArray(payload.tool_calls) ? payload.tool_calls : [];
     const items=calls.map(item=>`<div class="dg-trace-item"><span>${escapeHtml(labels[item.tool_name] || item.tool_name)}</span><span class="${item.status === 'success' ? 'dg-trace-ok' : 'dg-trace-bad'}">${item.status === 'success' ? '✓' : '异常'} ${Math.round(item.latency_ms || 0)} 毫秒</span></div>`).join("");

@@ -3,7 +3,6 @@ from __future__ import annotations
 from backend.app.mcp.registry import ToolRegistry
 from backend.app.mcp.tools import (
     GetCarePathwayTool,
-    GetContextualAssessmentTool,
     GetPrivacyReportTool,
     GetTriageResultTool,
     GetVisualEvidenceTool,
@@ -20,5 +19,4 @@ def create_tool_registry(services: ServiceContainer) -> ToolRegistry:
     registry.register(SearchGuidelineTool(services.knowledge))
     registry.register(GetCarePathwayTool(services.care))
     registry.register(GetPrivacyReportTool(services.privacy))
-    registry.register(GetContextualAssessmentTool(services.contextual))
     return registry

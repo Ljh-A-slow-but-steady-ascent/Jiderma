@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import time
 from dataclasses import dataclass
@@ -9,7 +10,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
-from backend.app.care.schemas import CarePathway, TriageDecision, VisualEvidence
+from backend.app.care.schemas import CarePathway, ClinicalMetadata, TriageDecision, VisualEvidence
 from backend.app.auth import require_user
 from backend.app.chat import (
     ChatRequest,
@@ -17,15 +18,9 @@ from backend.app.chat import (
     DermaGuardChatAgent,
     chat_model_catalog,
 )
-from backend.app.chat.mock import MockChatProvider, create_chat_provider
-from backend.app.contextual import (
-    ContextualAssessment,
-    ContextualIntakeRequest,
-    ContextualVerificationRequest,
-    VerificationPlan,
-)
 from backend.app.mcp.factory import create_tool_registry
 from backend.app.services.container import ServiceContainer, create_service_container
+from backend.app.services.clinical_extraction_service import field_labels
 from backend.app.services.privacy import EgressGuard, EgressRequest
 from backend.app.services.privacy_service import PrivacyReport
 from backend.app.services.report_service import ReportService
@@ -50,6 +45,30 @@ class PatientCreate(StrictModel):
     phone: str = Field(default="", max_length=40)
     medical_history: str = Field(default="", max_length=3000)
     allergy_history: str = Field(default="", max_length=2000)
+
+
+class ClinicalExtractionRequest(StrictModel):
+    narrative: str = Field(min_length=10, max_length=5000)
+    age: int = Field(ge=0, le=130)
+    gender: Literal["MALE", "FEMALE"]
+    patient_name: str = Field(default="", max_length=120)
+    outpatient_no: str = Field(default="", max_length=80)
+    phone: str = Field(default="", max_length=40)
+    model: Literal[
+        "auto", "glm-5.3-flash", "glm-4-flash", "openai/gpt-oss-120b",
+        "openai/gpt-oss-20b", "qwen/qwen3.8-27b", "gemini-flash",
+    ] = "auto"
+
+
+class ClinicalExtractionResponse(StrictModel):
+    metadata: dict[str, Any]
+    missing_fields: list[str]
+    missing_field_labels: list[str]
+    uncertain_fields: list[str]
+    provider: str
+    model: str
+    privacy_status: Literal["SAFE"] = "SAFE"
+    sanitized_fields: list[str] = Field(default_factory=list)
 
 
 class ReportGenerateRequest(StrictModel):
@@ -115,6 +134,45 @@ def _http_error(exc: Exception) -> HTTPException:
     return HTTPException(status_code=422, detail=str(exc))
 
 
+def _positive_symptoms(profile: ClinicalMetadata) -> list[str]:
+    names = {
+        "瘙痒": profile.itch,
+        "疼痛": profile.hurt,
+        "出血": profile.bleed,
+        "近期增大": profile.grew,
+        "外观变化": profile.changed,
+        "皮肤肿瘤史": profile.skin_cancer_history,
+        "其他肿瘤史": profile.cancer_history,
+    }
+    return [name for name, active in names.items() if active]
+
+
+@router.post("/clinical-metadata/extract", response_model=ClinicalExtractionResponse)
+async def extract_clinical_metadata(
+    payload: ClinicalExtractionRequest, app: Runtime
+) -> ClinicalExtractionResponse:
+    try:
+        result = app.services.clinical_extraction.extract(
+            narrative=payload.narrative.strip(),
+            age=payload.age,
+            gender=payload.gender,
+            model_id=payload.model,
+            identity_values=[payload.patient_name, payload.outpatient_no, payload.phone],
+        )
+        return ClinicalExtractionResponse(
+            metadata=result.metadata,
+            missing_fields=result.missing_fields,
+            missing_field_labels=field_labels(result.missing_fields),
+            uncertain_fields=result.uncertain_fields,
+            provider=result.provider,
+            model=result.model,
+            privacy_status="SAFE",
+            sanitized_fields=result.sanitized_fields,
+        )
+    except Exception as exc:
+        raise _http_error(exc) from exc
+
+
 @router.post("/cases", response_model=CaseCreated)
 async def create_case(
     app: Runtime,
@@ -124,10 +182,24 @@ async def create_case(
     patient_id: str | None = Form(default=None),
     lesion_site: str = Form(default="未填写"),
     chief_complaint: str = Form(default="未填写"),
+    clinical_metadata_json: str = Form(default=""),
 ) -> CaseCreated:
     try:
         if not patient_id and os.getenv("DERMAGUARD_AUTH_DISABLED", "0") != "1":
             raise ValueError("图像分析前必须先关联患者信息")
+        profile: ClinicalMetadata | None = None
+        if patient_id:
+            patient = app.services.repository.get_patient(patient_id)
+            if patient is None:
+                raise KeyError(f"patient not found: {patient_id}")
+            if not clinical_metadata_json.strip():
+                raise ValueError("请在图像分析前完整填写结构化病例信息")
+            profile = ClinicalMetadata.model_validate(json.loads(clinical_metadata_json))
+            expected_gender = {"男": "MALE", "女": "FEMALE"}.get(patient.sex)
+            if expected_gender is None:
+                raise ValueError("当前多模态模型的官方病例格式仅接受男性或女性")
+            if profile.age != patient.age or profile.gender != expected_gender:
+                raise ValueError("结构化病例的年龄或性别与患者档案不一致")
         content = await image.read(10 * 1024 * 1024 + 1)
         case_id = app.services.cases.create(
             content,
@@ -136,10 +208,13 @@ async def create_case(
             retention_mode=retention_mode,
         )
         if patient_id:
-            if app.services.repository.get_patient(patient_id) is None:
-                raise KeyError(f"patient not found: {patient_id}")
+            assert profile is not None
             app.services.repository.link_case_patient(
-                case_id, patient_id, lesion_site.strip() or "未填写", chief_complaint.strip() or "未填写"
+                case_id,
+                patient_id,
+                lesion_site.strip() or "未填写",
+                chief_complaint.strip() or "未填写",
+                profile.model_dump(mode="json"),
             )
         return CaseCreated(case_id=case_id, mode=mode, retention_mode=retention_mode)
     except Exception as exc:
@@ -188,7 +263,11 @@ async def analyze_case(case_id: str, app: Runtime) -> AnalysisResult:
     total_started = time.perf_counter()
     try:
         visual_started = time.perf_counter()
-        visual = app.services.visual.analyze(case_id, image_modality="dermoscopic")
+        case_patient = app.services.repository.get_case_patient(case_id)
+        if case_patient is None:
+            raise ValueError("多模态分析前必须关联患者和结构化病例")
+        profile = ClinicalMetadata.model_validate(case_patient.get("clinical_profile"))
+        visual = app.services.visual.analyze(case_id, clinical_metadata=profile)
         visual_wall = (time.perf_counter() - visual_started) * 1000
 
         triage_started = time.perf_counter()
@@ -196,15 +275,14 @@ async def analyze_case(case_id: str, app: Runtime) -> AnalysisResult:
         triage_latency = (time.perf_counter() - triage_started) * 1000
 
         rag_started = time.perf_counter()
-        visual_candidates = [item.label for item in visual.top_predictions[:5]]
-        if visual.prediction_mode == "supervised_linear_probe" and not visual.abstained:
-            visual_candidates = visual_candidates[:1]
+        visual_candidates = [item.label for item in visual.top_predictions[:3]]
         guidelines = app.services.knowledge.search_patient_context(
-            user_query="皮肤病灶辅助筛查",
+            user_query=case_patient.get("chief_complaint", "皮肤病灶辅助鉴别"),
             visual_candidates=visual_candidates,
+            positive_symptoms=_positive_symptoms(profile),
             risk_reasons=[triage.level.value, *triage.reason_codes],
-            topic="鉴别依据 检查依据 风险依据 转诊依据",
-            top_k=3,
+            topic="支持依据 冲突依据 鉴别要点 检查依据 转诊依据",
+            top_k=5,
         )
         rag_latency = (time.perf_counter() - rag_started) * 1000
 
@@ -278,9 +356,9 @@ async def view_cloud_payload(case_id: str, app: Runtime) -> dict[str, Any]:
             "triage_result": app.services.triage.get(case_id).model_dump(mode="json"),
             "care_pathway": app.services.care.get(case_id).model_dump(mode="json"),
         }
-        contextual = app.services.repository.get_contextual_assessment(case_id)
-        if contextual is not None:
-            payload["contextual_assessment"] = contextual
+        patient = app.services.repository.get_case_patient(case_id)
+        if patient and patient.get("clinical_profile"):
+            payload["clinical_profile"] = patient["clinical_profile"]
         decision = app.guard.enforce(
             EgressRequest(
                 channel="llm",
@@ -295,47 +373,6 @@ async def view_cloud_payload(case_id: str, app: Runtime) -> dict[str, Any]:
             "patient_identity_included": False,
             "egress_latency_ms": decision.latency_ms,
         }
-    except Exception as exc:
-        raise _http_error(exc) from exc
-
-
-@router.post("/cases/{case_id}/contextual-intake", response_model=VerificationPlan)
-async def contextual_intake(
-    case_id: str, request: ContextualIntakeRequest, app: Runtime
-) -> VerificationPlan:
-    try:
-        try:
-            provider = app.agent.provider if request.model == "auto" else create_chat_provider(request.model)
-        except Exception:
-            provider = MockChatProvider()
-        return app.services.contextual.create_plan(
-            case_id=case_id,
-            intake=request,
-            visual=app.services.visual.get(case_id),
-            triage=app.services.triage.get(case_id),
-            provider=provider,
-            guard=app.guard,
-        )
-    except Exception as exc:
-        raise _http_error(exc) from exc
-
-
-@router.post("/cases/{case_id}/contextual-calibration", response_model=ContextualAssessment)
-async def contextual_calibration(
-    case_id: str, request: ContextualVerificationRequest, app: Runtime
-) -> ContextualAssessment:
-    try:
-        return app.services.contextual.calibrate(
-            case_id, request, app.services.triage.get(case_id)
-        )
-    except Exception as exc:
-        raise _http_error(exc) from exc
-
-
-@router.get("/cases/{case_id}/contextual-assessment", response_model=ContextualAssessment)
-async def get_contextual_assessment(case_id: str, app: Runtime) -> ContextualAssessment:
-    try:
-        return app.services.contextual.get(case_id)
     except Exception as exc:
         raise _http_error(exc) from exc
 
@@ -389,7 +426,7 @@ async def generate_report(
             "visual": app.services.repository.get_visual(case_id) or {},
             "triage": app.services.repository.get_triage(case_id) or {},
             "care_pathway": app.services.repository.get_care_pathway(case_id) or {},
-            "contextual": app.services.repository.get_contextual_assessment(case_id) or {},
+            "clinical_profile": patient.get("clinical_profile", {}),
         }
         generated = ReportService(app.guard).generate(
             case_id=case_id,

@@ -25,7 +25,15 @@ def test_password_session_patient_and_report_lifecycle(tmp_path: Path) -> None:
     image = tmp_path / "lesion.png"
     image.write_bytes(b"image")
     repository.create_case("CASE_TEST", str(image), "abc", "local", "clinician")
-    repository.link_case_patient("CASE_TEST", patient.patient_id, "左前臂", "近期增大")
+    repository.link_case_patient(
+        "CASE_TEST", patient.patient_id, "左前臂", "近期增大",
+        {
+            "age": 42, "gender": "FEMALE", "region": "FOREARM",
+            "itch": False, "hurt": False, "bleed": False, "grew": True,
+            "changed": True, "diameter_1": 10, "diameter_2": 8,
+            "skin_cancer_history": False, "cancer_history": False,
+        },
+    )
 
     generated = ReportService(EgressGuard(repository)).generate(
         case_id="CASE_TEST",
@@ -34,7 +42,6 @@ def test_password_session_patient_and_report_lifecycle(tmp_path: Path) -> None:
             "visual": {"top_predictions": [{"label": "nevus", "score": 0.8}]},
             "triage": {"level": "LOCAL_REVIEW"},
             "care_pathway": {"action": "医生继续评估"},
-            "contextual": {},
         },
         model_id="local-template",
     )
@@ -93,7 +100,7 @@ def test_cloud_report_provider_only_receives_masked_structured_payload(monkeypat
     }
     result = ReportService(EgressGuard()).generate(
         case_id="CASE_PRIVATE", patient=patient,
-        clinical_payload={"visual": {}, "triage": {}, "care_pathway": {}, "contextual": {}},
+        clinical_payload={"visual": {}, "triage": {}, "care_pathway": {}},
         model_id="fake-model",
     )
     serialized = __import__("json").dumps(captured["payload"], ensure_ascii=False)

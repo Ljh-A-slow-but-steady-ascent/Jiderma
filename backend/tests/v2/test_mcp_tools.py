@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from backend.app.care.schemas import ClinicalMetadata
 from backend.app.database import CaseRepository, init_database
 from backend.app.mcp.factory import create_tool_registry
 from backend.app.mcp.schemas import ToolContext
@@ -9,7 +10,8 @@ from backend.app.services.container import create_service_container
 
 
 class FakeRunner:
-    def predict(self, image_path: Path) -> dict:
+    def predict(self, image_path: Path, clinical_metadata: ClinicalMetadata) -> dict:
+        assert clinical_metadata.grew is True
         return {
             "model_name": "DermFM-Zero-Open",
             "top_predictions": [
@@ -21,6 +23,13 @@ class FakeRunner:
         }
 
 
+CLINICAL = ClinicalMetadata(
+    age=65, gender="MALE", region="FOREARM", itch=True, hurt=False,
+    bleed=True, grew=True, changed=True, diameter_1=10, diameter_2=8,
+    skin_cancer_history=False, cancer_history=False,
+)
+
+
 @pytest.fixture
 def ready_case(tmp_path):
     repository = CaseRepository(init_database("sqlite+pysqlite:///:memory:"))
@@ -29,7 +38,7 @@ def ready_case(tmp_path):
     services.visual.runner = FakeRunner()
     sample = Path("third_party/DermFM-Zero/examples/PAT_8_15_820.png").read_bytes()
     case_id = services.cases.create(sample, "image/png")
-    visual = services.visual.analyze(case_id)
+    visual = services.visual.analyze(case_id, CLINICAL)
     triage = services.triage.evaluate(visual)
     chunks = services.knowledge.search("皮肤专科 优先转诊", top_k=2)
     services.care.recommend(visual, triage, services.knowledge.references(chunks))
@@ -49,7 +58,6 @@ def test_mcp_list_tools(ready_case):
         "search_guideline",
         "get_care_pathway",
         "get_privacy_report",
-        "get_contextual_assessment",
     }
 
 

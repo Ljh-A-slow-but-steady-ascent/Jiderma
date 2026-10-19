@@ -289,7 +289,7 @@ def render_hero() -> str:
 def render_empty_state() -> str:
     return """
 <div class="dg-empty"><div class="dg-empty-mark">⌁</div><strong>等待图像分析</strong>
-<p>上传清晰的皮肤镜图像后，将在这里呈现视觉候选、风险分级、医学依据与建议路径。</p></div>"""
+<p>完成病例填写并上传清晰的临床皮肤图像后，将在这里呈现多模态候选、风险分级、医学证据与建议路径。</p></div>"""
 
 
 def render_case_status(analysis: dict[str, Any]) -> str:
@@ -305,8 +305,6 @@ def render_case_status(analysis: dict[str, Any]) -> str:
     <div style="padding:.72rem;border-radius:12px;background:var(--panel-soft);"><small style="color:var(--muted);">处理位置</small><div style="font-size:1.02rem;font-weight:680;margin-top:.32rem;color:var(--accent);">本机安全域</div></div>
   </div>
 </div>"""
-
-
 def render_risk_gauge(level: str, score: float = 0.0) -> str:
     levels = ["RETAKE", "LOCAL_REVIEW", "REFERRAL", "PRIORITY_REFERRAL"]
     current = levels.index(level) if level in levels else 0
@@ -364,7 +362,7 @@ def render_candidate_radar(predictions: list[dict], labels_zh: dict | None = Non
 </div>""")
     empty = '<p class="dg-muted">暂无候选结果</p>'
     return f"""
-<div class="dg-card"><div class="dg-eyebrow">视觉候选</div><div class="dg-card-title">相对匹配分布</div>
+<div class="dg-card"><div class="dg-eyebrow">多模态候选</div><div class="dg-card-title">相对匹配分布</div>
 {''.join(rows) if rows else empty}
 <div style="margin-top:15px;color:var(--muted);font-size:10px;">候选分数用于辅助筛查，不等同于临床确诊概率</div></div>"""
 
@@ -377,10 +375,10 @@ def render_evidence_graph(analysis: dict | None, labels_zh: dict | None = None) 
     top_name = escape(str(labels_zh.get(raw, labels_zh.get(raw.lower(), raw or "待分析"))))
     level = str(analysis.get("triage", {}).get("level", "待生成"))
     nodes = [
-        ("视觉证据", top_name, f"首位候选 · {float(top.get('score', 0)):.1%}"),
+        ("图像+病例", top_name, f"首位候选 · {float(top.get('score', 0)):.1%}"),
         ("本地决策", escape(RISK_LABELS_ZH.get(level, level)), "确定性规则"),
         ("指南检索", f"{len(analysis.get('guidelines', []))} 条依据", "本地来源绑定"),
-        ("行动建议", "照护路径", "症状可二次校准"),
+        ("行动建议", "照护路径", "由医生综合判断"),
     ]
     rendered = []
     for idx, (eyebrow, title, note) in enumerate(nodes):
@@ -419,43 +417,3 @@ def render_privacy_panel(privacy: dict | None = None) -> str:
   </div>{''.join(rows)}
   <div style="margin-top:.8rem;color:var(--muted);font-size:.72rem;line-height:1.6;">云模型仅接收通过隐私检查的结构化文本。</div>
 </div>"""
-
-
-def render_calibration_compare(visual_level: str, adjusted_level: str, risk_changed: bool) -> str:
-    left = escape(RISK_LABELS_ZH.get(visual_level, visual_level))
-    right = escape(RISK_LABELS_ZH.get(adjusted_level, adjusted_level))
-    status, tone = ("风险已上调", "#d5a15e") if risk_changed else ("风险保持", "#79c8b8")
-    return f"""
-<div style="display:grid;grid-template-columns:1fr auto 1fr;gap:14px;align-items:center;padding:1.15rem;border:1px solid var(--border);border-radius:17px;background:var(--panel);color:var(--text);">
-  <div><small style="color:var(--muted);">视觉初步分级</small><div style="font-size:1.05rem;font-weight:680;margin-top:.32rem;">{left}</div></div>
-  <div style="color:var(--arrow);font-size:1.2rem;">→</div>
-  <div style="text-align:right;"><small style="color:{tone};">{status}</small><div style="font-size:1.05rem;font-weight:680;margin-top:.32rem;">{right}</div></div>
-</div>"""
-
-
-def render_symptom_heatmap(features: dict | None = None) -> str:
-    cells = []
-    for name, value in (features or {}).items():
-        score = max(0.0, min(1.0, float(value)))
-        alpha = .08 + score * .3
-        cells.append(
-            f'<div style="padding:10px 11px;border-radius:11px;border:1px solid rgba(121,200,184,{alpha:.2f});background:rgba(121,200,184,{alpha / 2:.2f});">'
-            f'<div style="color:var(--muted);font-size:11px;">{escape(str(name))}</div>'
-            f'<div style="height:3px;margin-top:8px;border-radius:9px;background:var(--track);"><div style="height:100%;width:{score*100:.1f}%;border-radius:inherit;background:var(--accent);"></div></div></div>'
-        )
-    return f'<div class="dg-card"><div class="dg-eyebrow">症状核验摘要</div><div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-top:12px;">{"".join(cells)}</div></div>'
-
-
-# 兼容旧调用；主页面不再展示装饰性 3D 图。
-def render_disease_network(active_labels: list[str] | None = None) -> str:
-    labels = [escape(str(item)) for item in (active_labels or [])[:5]]
-    body = "".join(f'<span style="padding:7px 10px;border:1px solid var(--border);border-radius:99px;color:var(--muted);font-size:11px;">{item}</span>' for item in labels)
-    return f'<div class="dg-card"><div class="dg-eyebrow">候选关联</div><div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:14px;">{body}</div></div>'
-
-
-def render_disease_pathway_3d(active: str | None = None) -> str:
-    return '<div class="dg-card"><div class="dg-eyebrow">评估路径</div><div class="dg-card-title">视觉筛查 → 症状核验 → 专业评估</div></div>'
-
-
-def render_rag_graph(active_ids: list[str] | None = None) -> str:
-    return '<div class="dg-card"><div class="dg-eyebrow">本地知识检索</div><div class="dg-card-title">关键词与医学语义双路召回 · 来源绑定</div></div>'

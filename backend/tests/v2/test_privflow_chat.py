@@ -89,17 +89,15 @@ def test_cloud_visual_projection_hides_visual_implementation():
     public = public_visual_evidence(
         {
             "model": "DermFM-Zero-Open + HAM7 Linear Head",
-            "candidate_set": "ham7_supervised_7_v1",
-            "prediction_mode": "supervised_linear_probe",
-            "confidence_threshold": 0.62,
-            "top_predictions": [{"label": "benign keratosis", "score": 0.91}],
+            "candidate_set": "pad_clinical_multimodal_v1",
+            "prediction_mode": "supervised_multimodal_pad",
+            "top_predictions": [{"label": "nevus", "score": 0.91}],
             "image_quality": 0.88,
             "supports_triage": True,
-            "abstained": False,
         }
     )
     serialized = str(public)
-    assert public["top_predictions"][0]["label"] == "良性角化性病变"
+    assert public["top_predictions"][0]["label"] == "色素痣"
     assert not any(
         term in serialized
         for term in ["DermFM", "HAM7", "Linear Head", "candidate_set", "prediction_mode"]
